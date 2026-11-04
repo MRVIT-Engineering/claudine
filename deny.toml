@@ -1,0 +1,51 @@
+# cargo-deny configuration. See https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# Fails on any RustSec vulnerability. `unmaintained` and `unsound` findings are
+# reported for the whole dependency tree.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+# Accepted risks, also listed in SECURITY.md. Recheck both on every Tauri upgrade
+# and remove them once Tauri's Linux stack moves off gtk 0.18.
+ignore = [
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18 unsound VariantStrIter, Linux only, via Tauri's gtk 0.18; the fix needs glib >=0.20, which gtk 0.18 can't use" },
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, build-time only, via Tauri's gtk 0.18; no upgrade exists" },
+]
+
+[licenses]
+# Anything else needs explicit approval from the project owner.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.9
+# Keep the approved list above even if nothing uses an entry right now.
+unused-allowed-license = "allow"
+# Approved per crate, not globally: all of these come in through Tauri. A new crate
+# under one of these licenses still fails and needs review.
+exceptions = [
+  { allow = ["MPL-2.0"], crate = "cssparser" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short" },
+  { allow = ["MPL-2.0"], crate = "option-ext" },
+  { allow = ["MPL-2.0"], crate = "selectors" },
+  { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" },
+]
+
+[licenses.private]
+# Our own crates are `publish = false` and have no license yet.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

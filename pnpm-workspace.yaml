@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+
+# Supply-chain settings. See https://pnpm.io/settings
+# 7 days, in minutes. A version newer than this fails the install.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+# Refuse packages whose Node engine range excludes the current Node.
+engineStrict: true
+# Fail the install if a dependency has a build script nobody has reviewed.
+strictDepBuilds: true
+# Build scripts are blocked unless listed here.
+allowBuilds: {}

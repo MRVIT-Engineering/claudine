@@ -1,0 +1,19 @@
+{
+  "name": "my-editor",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "tauri": "pnpm --filter @my-editor/desktop tauri",
+    "dev": "pnpm tauri dev",
+    "build": "pnpm tauri build",
+    "check": "pnpm --filter @my-editor/desktop typecheck && cargo check --workspace --all-targets",
+    "test": "cargo test --workspace",
+    "lint": "biome check . && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3"
+  }
+}
