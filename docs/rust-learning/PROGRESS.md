@@ -16,6 +16,8 @@ Mode: explain
 | Traits must be in scope | introduced | crates/hook/src/main.rs | `use std::io::Read` enables `.read_to_string()` |
 | `&'static str` vs `String` | introduced | apps/desktop/src-tauri/src/main.rs | Borrowed for the whole program vs owned on the heap |
 | `expect` and panics | introduced | apps/desktop/src-tauri/src/main.rs | Panic for unrecoverable states, `Result` otherwise |
+| Package, crate, lib vs bin targets | introduced | Cargo.toml | One package, one `lib.rs` and/or `main.rs` |
+| Macros (`name!`) | introduced | apps/desktop/src-tauri/src/main.rs | Generate code at compile time; `!` marks them |
 
 ## Exercises
 | Exercise | File | Status |
@@ -24,3 +26,4 @@ Mode: explain
 ## Session log
 
 - **2026-11-05, initial setup (explain mode):** wrote `protocol`, `core`, `hook` and the Tauri backend. Introduced 11 concepts across 6 changes. No compiler errors. No exercises.
+- **2026-11-05, project walkthrough:** explained every Rust file and how the crates connect. Introduced packages/crates and macros. No code changed.
