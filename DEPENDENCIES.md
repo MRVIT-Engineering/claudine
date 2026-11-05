@@ -6,6 +6,7 @@ Every direct dependency, with the reason it's here.
 
 | Crate | Version | Used by | Reason |
 |---|---|---|---|
+| `cap-std` | 3.4.6 | `crates/core` | Opens files relative to a directory handle, so paths can't escape the project, even in a symlink race. |
 | `serde` | 1.0.229 | `crates/protocol` | Derives serialization for messages between the hook and the app. |
 | `serde_json` | 1.0.154 | `crates/protocol` | JSON wire format for those messages. |
 | `tauri` | 2.12.5 | `apps/desktop/src-tauri` | Desktop app framework: window, webview, IPC. |

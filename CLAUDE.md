@@ -33,6 +33,7 @@ Run from the repo root:
 ## Rules for changes
 
 - **New Tauri command:** add it to `AppManifest::commands` in `apps/desktop/src-tauri/build.rs` and grant only what's needed in `capabilities/`. Commands are deny-by-default.
+- **File access:** every project file operation goes through `ProjectRoot` in `crates/core/src/path_guard.rs`: get the path from `read_path` or `write_path`, then use `dir()`. Never use `std::fs` on project files.
 - **Capabilities and CSP:** keep them minimal. Don't add `core:default`, fs, shell, http or opener permissions, remote sources or `unsafe-eval` without asking.
 - **CodeMirror:** mount every editor in a shadow root through `createEditorRoot` in `apps/desktop/src/lib/codemirror.tsx`, and pass it as `root`. In a normal document CodeMirror adds a `<style>` tag, which the CSP blocks. Don't relax `style-src` to work around this.
 - **Devtools:** never enable tauri's `devtools` Cargo feature; it would ship the inspector in release builds.
