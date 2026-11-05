@@ -261,6 +261,26 @@ function EditorSection() {
           onChange={(wrapLines) => updateSettings({ wrapLines })}
         />
       </SettingRow>
+      <SettingRow
+        title="Suggestions while typing"
+        text="Show completions as you type. Ctrl+Space always shows them."
+      >
+        <Toggle
+          label="Suggestions while typing"
+          checked={state.settings.suggestOnType}
+          onChange={(suggestOnType) => updateSettings({ suggestOnType })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Auto-close brackets"
+        text="Typing ( [ { or a quote adds the closing one."
+      >
+        <Toggle
+          label="Auto-close brackets"
+          checked={state.settings.closeBrackets}
+          onChange={(closeBrackets) => updateSettings({ closeBrackets })}
+        />
+      </SettingRow>
     </>
   );
 }

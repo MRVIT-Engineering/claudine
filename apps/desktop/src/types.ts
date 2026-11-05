@@ -79,6 +79,8 @@ export interface Settings {
   ligatures: boolean;
   diffLayout: "side" | "inline";
   wrapLines: boolean;
+  suggestOnType: boolean;
+  closeBrackets: boolean;
   startOn: string;
   warnSameFile: boolean;
   worktreePerSession: boolean;

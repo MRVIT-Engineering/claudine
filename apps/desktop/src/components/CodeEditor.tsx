@@ -4,12 +4,12 @@ import {
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands";
-import { bracketMatching, indentOnInput } from "@codemirror/language";
 import {
-  highlightSelectionMatches,
-  search,
-  searchKeymap,
-} from "@codemirror/search";
+  bracketMatching,
+  indentOnInput,
+  indentUnit,
+} from "@codemirror/language";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState } from "@codemirror/state";
 import {
   drawSelection,
@@ -20,16 +20,51 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { createEffect, onCleanup, onMount } from "solid-js";
+import { setActiveEditor } from "../lib/activeEditor";
 import { buffers } from "../lib/buffers";
 import {
   createEditorRoot,
   languageFor,
   sharedExtensions,
 } from "../lib/codemirror";
-import { state as appState, setCursor, setDirty } from "../state/store";
+import {
+  assistExtensions,
+  completionSources,
+  editingExtensions,
+} from "../lib/editorFeatures";
+import {
+  state as appState,
+  type CursorInfo,
+  projectTexts,
+  reveal,
+  setCursor,
+  setDirty,
+  setReveal,
+} from "../state/store";
 
 const wrapping = new Compartment();
+const assist = new Compartment();
 const wrapExtension = (wrap: boolean) => (wrap ? EditorView.lineWrapping : []);
+const assistFor = (path: string) =>
+  assistExtensions(
+    {
+      suggest: appState.settings.suggestOnType,
+      brackets: appState.settings.closeBrackets,
+    },
+    completionSources(path, projectTexts),
+  );
+
+function cursorInfo(editorState: EditorState): CursorInfo {
+  const ranges = editorState.selection.ranges;
+  const head = editorState.selection.main.head;
+  const line = editorState.doc.lineAt(head);
+  return {
+    line: line.number,
+    column: head - line.from + 1,
+    selections: ranges.length,
+    selected: ranges.reduce((sum, range) => sum + range.to - range.from, 0),
+  };
+}
 
 function createState(path: string, text: string) {
   return EditorState.create({
@@ -44,7 +79,10 @@ function createState(path: string, text: string) {
       history(),
       indentOnInput(),
       bracketMatching(),
-      search({ top: true }),
+      editingExtensions,
+      indentUnit.of("    "),
+      EditorState.tabSize.of(4),
+      assist.of(assistFor(path)),
       highlightSelectionMatches(),
       wrapping.of(wrapExtension(appState.settings.wrapLines)),
       keymap.of([
@@ -61,9 +99,10 @@ function createState(path: string, text: string) {
           setDirty(path, update.state.doc.toString() !== text);
         }
         if (update.docChanged || update.selectionSet) {
-          const head = update.state.selection.main.head;
-          const line = update.state.doc.lineAt(head);
-          setCursor({ line: line.number, column: head - line.from + 1 });
+          setCursor(cursorInfo(update.state));
+        }
+        if (update.focusChanged && update.view.hasFocus) {
+          setActiveEditor(update.view);
         }
       }),
     ],
@@ -84,14 +123,36 @@ export function CodeEditor(props: { path: string; text: string }) {
       root,
     });
     view = editor;
-    const head = editor.state.selection.main.head;
-    const line = editor.state.doc.lineAt(head);
-    setCursor({ line: line.number, column: head - line.from + 1 });
+    setActiveEditor(editor);
+    setCursor(cursorInfo(editor.state));
+  });
+
+  createEffect(() => {
+    const target = reveal();
+    if (!target || !view || target.path !== props.path) return;
+    setReveal(null);
+    const line = view.state.doc.line(
+      Math.min(target.line, view.state.doc.lines),
+    );
+    view.dispatch({
+      selection: {
+        anchor: line.from + target.start,
+        head: line.from + target.end,
+      },
+      effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+    });
+    view.focus();
   });
 
   createEffect(() => {
     const wrap = appState.settings.wrapLines;
     view?.dispatch({ effects: wrapping.reconfigure(wrapExtension(wrap)) });
+  });
+
+  createEffect(() => {
+    appState.settings.suggestOnType;
+    appState.settings.closeBrackets;
+    view?.dispatch({ effects: assist.reconfigure(assistFor(props.path)) });
   });
 
   onCleanup(() => {
@@ -100,6 +161,7 @@ export function CodeEditor(props: { path: string; text: string }) {
         state: view.state,
         scroll: view.scrollSnapshot(),
       });
+      setActiveEditor((current) => (current === view ? null : current));
       view.destroy();
     }
     setCursor(null);

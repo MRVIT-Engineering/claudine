@@ -11,8 +11,10 @@ import {
   updateSettings,
 } from "../state/store";
 import type { View } from "../types";
+import { openPalette } from "./CommandPalette";
 import { STATUS_WORD } from "./Common";
-import { CheckIcon, LogoIcon } from "./Icons";
+import { findMatches } from "./FindPanel";
+import { CheckIcon, LogoIcon, SearchIcon } from "./Icons";
 
 const TABS: { view: View; label: string }[] = [
   { view: "editor", label: "Editor" },
@@ -56,6 +58,13 @@ export function AppBar() {
           )}
         </For>
       </nav>
+      <Show when={workspaceView()}>
+        <button type="button" class="goto-box" onClick={() => openPalette("")}>
+          <SearchIcon size={13} />
+          <span>Go to file…</span>
+          <kbd>⌘⇧O</kbd>
+        </button>
+      </Show>
       <div class="appbar-right">
         <Switch>
           <Match when={state.view === "editor"}>
@@ -141,15 +150,33 @@ export function StatusBar() {
         {(c) => (
           <span>
             Ln {c().line}, Col {c().column}
+            {c().selections > 1
+              ? ` (${c().selections} cursors)`
+              : c().selected > 0
+                ? ` (${c().selected} selected)`
+                : ""}
           </span>
         )}
+      </Show>
+      <Show when={state.view === "editor" && cursor()}>
+        <span>Spaces: 4</span>
       </Show>
       <Show when={state.view === "editor" && state.dirty[state.activeTab]}>
         <span class="status-unsaved">
           Unsaved · saving needs the Rust backend
         </span>
       </Show>
+      <Show when={state.view === "editor" && findMatches()?.total}>
+        <span>
+          {findMatches()?.current || "–"}/{findMatches()?.total} matches
+        </span>
+      </Show>
       <span class="status-legend">
+        <Show when={state.view === "editor"}>
+          <span class="status-hint">⌘⇧O files</span>
+          <span class="status-hint">⌘F find</span>
+          <span class="status-hint status-hint-last">⌘⇧F search</span>
+        </Show>
         <For each={state.sessions}>
           {(session) => {
             const account = () => accountOf(session.accountId);

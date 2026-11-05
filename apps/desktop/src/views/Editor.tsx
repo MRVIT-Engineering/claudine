@@ -9,15 +9,19 @@ import {
 } from "solid-js";
 import { CodeEditor } from "../components/CodeEditor";
 import { AccountChip, Empty } from "../components/Common";
+import { openFindInActive } from "../components/FindPanel";
 import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
   CloseIcon,
   FileIcon,
+  FilesIcon,
   FolderIcon,
   PlusIcon,
+  SearchIcon,
   SplitIcon,
+  SunIcon,
 } from "../components/Icons";
 import { MergeReview } from "../components/MergeReview";
 import { FILES, TREE } from "../mock/data";
@@ -41,19 +45,30 @@ import {
   sendMessage,
   setDialog,
   setSessionMode,
+  showSidebar,
   state,
   toggleFolder,
+  updateSettings,
 } from "../state/store";
 import type { Session, SourceFile, TranscriptItem, TreeNode } from "../types";
+import { focusProjectSearch, SearchPanel } from "./SearchPanel";
 
 function sessionForFile(path: string): Session | undefined {
   return state.sessions.find((s) => s.file === path);
 }
 
+/** Folders first, then files, each alphabetically, as in VS Code. */
+function sortedNodes(nodes: TreeNode[]): TreeNode[] {
+  return [...nodes].sort((a, b) => {
+    if (!!a.children !== !!b.children) return a.children ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+}
+
 function FileTree(props: { nodes: TreeNode[]; depth: number }) {
   return (
     <ul class="tree">
-      <For each={props.nodes}>
+      <For each={sortedNodes(props.nodes)}>
         {(node) => {
           const collapsed = () => state.collapsed.includes(node.path);
           const session = () => sessionForFile(node.path);
@@ -119,7 +134,7 @@ function FileTree(props: { nodes: TreeNode[]; depth: number }) {
 
 function Explorer() {
   return (
-    <aside class="explorer">
+    <aside class="sidebar explorer">
       <h2 class="section-title">Explorer</h2>
       <div class="explorer-scroll">
         <FileTree nodes={TREE} depth={0} />
@@ -133,53 +148,133 @@ function Explorer() {
 
 function Tabs() {
   return (
-    <div class="file-tabs" role="tablist" aria-label="Open files">
-      <For each={state.openTabs}>
-        {(path) => {
-          const file = FILES[path];
-          const stats = () => lineStats(path);
-          const proposed = () =>
-            path === state.activeTab && hunkCounts(path).pending > 0;
-          return (
-            <div
-              class="file-tab"
-              classList={{ active: state.activeTab === path }}
-            >
-              <button
-                type="button"
-                class="file-tab-open"
-                role="tab"
-                aria-selected={state.activeTab === path}
-                onClick={() => openFile(path)}
+    <div class="file-tabs-bar">
+      <div class="file-tabs" role="tablist" aria-label="Open files">
+        <For each={state.openTabs}>
+          {(path) => {
+            const file = FILES[path];
+            const stats = () => lineStats(path);
+            const proposed = () =>
+              path === state.activeTab && hunkCounts(path).pending > 0;
+            return (
+              <div
+                class="file-tab"
+                classList={{ active: state.activeTab === path }}
               >
-                <Show when={proposed()}>
-                  <SplitIcon size={13} />
-                </Show>
-                <span>{file?.name}</span>
-                <Show when={state.dirty[path]}>
-                  <span class="dirty-dot" title="Unsaved changes" />
-                </Show>
-                <Show when={proposed()}>
-                  <span class="muted">(proposed)</span>
-                  <span class="stat-add">+{stats().added}</span>
-                  <Show when={stats().removed > 0}>
-                    <span class="stat-del">−{stats().removed}</span>
+                <button
+                  type="button"
+                  class="file-tab-open"
+                  role="tab"
+                  aria-selected={state.activeTab === path}
+                  onClick={() => openFile(path)}
+                >
+                  <Show when={proposed()}>
+                    <SplitIcon size={13} />
                   </Show>
-                </Show>
-              </button>
-              <button
-                type="button"
-                class="file-tab-close"
-                aria-label={`Close ${file?.name}`}
-                onClick={() => closeTab(path)}
-              >
-                <CloseIcon size={11} />
-              </button>
-            </div>
-          );
-        }}
-      </For>
+                  <span>{file?.name}</span>
+                  <Show when={state.dirty[path]}>
+                    <span class="dirty-dot" title="Unsaved changes" />
+                  </Show>
+                  <Show when={proposed()}>
+                    <span class="muted">(proposed)</span>
+                    <span class="stat-add">+{stats().added}</span>
+                    <Show when={stats().removed > 0}>
+                      <span class="stat-del">−{stats().removed}</span>
+                    </Show>
+                  </Show>
+                </button>
+                <button
+                  type="button"
+                  class="file-tab-close"
+                  aria-label={`Close ${file?.name}`}
+                  onClick={() => closeTab(path)}
+                >
+                  <CloseIcon size={11} />
+                </button>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+      <button
+        type="button"
+        class="tabs-find"
+        title="Find in file"
+        aria-label="Find in file"
+        onClick={openFindInActive}
+      >
+        <SearchIcon size={13} />
+        <kbd>⌘F</kbd>
+      </button>
     </div>
+  );
+}
+
+function Breadcrumb(props: { path: string }) {
+  const parts = () => props.path.split("/");
+  return (
+    <nav class="breadcrumb" aria-label="File path">
+      <For each={parts()}>
+        {(part, index) => (
+          <>
+            <Show when={index() > 0}>
+              <span class="breadcrumb-sep">›</span>
+            </Show>
+            <span
+              classList={{ "breadcrumb-file": index() === parts().length - 1 }}
+            >
+              {part}
+            </span>
+          </>
+        )}
+      </For>
+    </nav>
+  );
+}
+
+function ActivityBar() {
+  return (
+    <nav class="activity-bar" aria-label="Side bar">
+      <button
+        type="button"
+        class="activity-btn"
+        classList={{ active: state.sidebar === "explorer" }}
+        title="Explorer (⇧⌘E)"
+        aria-label="Explorer"
+        aria-pressed={state.sidebar === "explorer"}
+        onClick={() => showSidebar("explorer")}
+      >
+        <FilesIcon size={17} />
+      </button>
+      <button
+        type="button"
+        class="activity-btn"
+        classList={{ active: state.sidebar === "search" }}
+        title="Search (⇧⌘F)"
+        aria-label="Search"
+        aria-pressed={state.sidebar === "search"}
+        onClick={() => {
+          showSidebar("search");
+          focusProjectSearch("");
+        }}
+      >
+        <SearchIcon size={17} />
+      </button>
+      <span class="spacer" />
+      <button
+        type="button"
+        class="activity-btn"
+        title="Toggle light and dark theme"
+        aria-label="Toggle theme"
+        onClick={() =>
+          updateSettings({
+            theme: state.settings.theme === "dark" ? "light" : "dark",
+          })
+        }
+      >
+        <SunIcon size={16} />
+      </button>
+    </nav>
   );
 }
 
@@ -406,7 +501,7 @@ function ChatItem(props: { item: TranscriptItem; session: Session }) {
               class="edit-card-link"
               onClick={() => openFile(item.target)}
             >
-              <SplitIcon size={13} /> Showing side by side in the editor
+              <SplitIcon size={13} /> Open side-by-side diff
             </button>
           </div>
         );
@@ -621,7 +716,6 @@ function ChatPanel() {
               >
                 <b>{letterOf(account()?.label ?? "?")}</b>
                 <span class="truncate">{account()?.label}</span>
-                <span class={`dot dot-${session.status}`} />
               </button>
             );
           }}
@@ -681,9 +775,13 @@ export function Editor() {
   const file = () => FILES[state.activeTab];
   return (
     <div class="editor-layout">
-      <Explorer />
+      <ActivityBar />
+      <Show when={state.sidebar === "search"} fallback={<Explorer />}>
+        <SearchPanel />
+      </Show>
       <main class="editor-main">
         <Tabs />
+        <Show when={file()}>{(f) => <Breadcrumb path={f().path} />}</Show>
         <Show
           when={file()}
           keyed

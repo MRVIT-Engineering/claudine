@@ -1,5 +1,6 @@
 import { Match, Show, Switch } from "solid-js";
 import { AppBar, StatusBar } from "./components/Chrome";
+import { CommandPalette } from "./components/CommandPalette";
 import { Dialogs } from "./components/Dialogs";
 import { state } from "./state/store";
 import { AccountsView } from "./views/Accounts";
@@ -34,6 +35,7 @@ export function App() {
         </Show>
       </div>
       <Dialogs />
+      <CommandPalette />
     </Show>
   );
 }

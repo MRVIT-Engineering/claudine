@@ -61,6 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
   ligatures: true,
   diffLayout: "side",
   wrapLines: true,
+  suggestOnType: true,
+  closeBrackets: true,
   startOn: "least-busy",
   warnSameFile: true,
   worktreePerSession: false,
@@ -95,6 +97,8 @@ function loadSettings(raw: unknown): Settings {
     ligatures: bool(s.ligatures, d.ligatures),
     diffLayout: s.diffLayout === "inline" ? "inline" : "side",
     wrapLines: bool(s.wrapLines, d.wrapLines),
+    suggestOnType: bool(s.suggestOnType, d.suggestOnType),
+    closeBrackets: bool(s.closeBrackets, d.closeBrackets),
     startOn: typeof s.startOn === "string" ? s.startOn : d.startOn,
     warnSameFile: bool(s.warnSameFile, d.warnSameFile),
     worktreePerSession: bool(s.worktreePerSession, d.worktreePerSession),
@@ -161,6 +165,7 @@ interface AppState {
   openTabs: string[];
   activeTab: string;
   collapsed: string[];
+  sidebar: "explorer" | "search";
   decisions: Record<string, Decision>;
   dirty: Record<string, boolean>;
 }
@@ -182,6 +187,7 @@ const [state, setState] = createStore<AppState>({
   openTabs: initialTabs(),
   activeTab: "src/session/pool.rs",
   collapsed: [...INITIAL_COLLAPSED],
+  sidebar: "explorer",
   decisions: {},
   dirty: {},
 });
@@ -189,12 +195,26 @@ const [state, setState] = createStore<AppState>({
 export { state };
 
 const [composerFocus, setComposerFocus] = createSignal(0);
-const [cursor, setCursor] = createSignal<{
+export interface CursorInfo {
   line: number;
   column: number;
-} | null>(null);
+  selections: number;
+  selected: number;
+}
+const [cursor, setCursor] = createSignal<CursorInfo | null>(null);
 
 export { cursor, setCursor };
+
+/** A place to jump to once a file is open: a line, and a column range to select. */
+export interface Reveal {
+  path: string;
+  line: number;
+  start: number;
+  end: number;
+}
+const [reveal, setReveal] = createSignal<Reveal | null>(null);
+
+export { reveal, setReveal };
 
 const [dialog, setDialog] = createSignal<"new-session" | "broadcast" | null>(
   null,
@@ -388,6 +408,54 @@ export function resolvedText(path: string): string {
         : segment.removed;
     })
     .join("\n");
+}
+
+export function showSidebar(sidebar: "explorer" | "search") {
+  setState("sidebar", sidebar);
+}
+
+/** A file as it is on disk: for a file under review, its original text. */
+export function diskText(path: string): string {
+  const file = FILES[path];
+  if (!file) return "";
+  if (!file.segments) return (file.lines ?? []).join("\n");
+  return file.segments
+    .flatMap((segment) =>
+      segment.kind === "context" ? segment.lines : segment.removed,
+    )
+    .join("\n");
+}
+
+/** What project search looks at: unsaved edits where they exist, like VS Code. */
+export function searchTexts(): Map<string, string> {
+  const texts = new Map<string, string>();
+  for (const path of Object.keys(FILES)) {
+    texts.set(path, buffers.get(path)?.state.doc.toString() ?? diskText(path));
+  }
+  return texts;
+}
+
+export function revealMatch(
+  path: string,
+  line: number,
+  start: number,
+  end: number,
+) {
+  navigate("editor");
+  openFile(path);
+  setReveal({ path, line, start, end });
+}
+
+/** The current text of every file: open buffers first, otherwise the file itself. */
+export function projectTexts(): Map<string, string> {
+  const texts = new Map<string, string>();
+  for (const path of Object.keys(FILES)) {
+    texts.set(
+      path,
+      buffers.get(path)?.state.doc.toString() ?? resolvedText(path),
+    );
+  }
+  return texts;
 }
 
 export function closeTab(path: string) {

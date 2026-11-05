@@ -19,6 +19,7 @@ Every direct dependency, with the reason it's here.
 | `solid-js` | 1.9.17 | `apps/desktop` | UI framework. |
 | `@codemirror/view` | 6.43.15 | `apps/desktop` | The code editor's DOM view. |
 | `@codemirror/state` | 6.7.6 | `apps/desktop` | Editor documents, selections and transactions. |
+| `@codemirror/autocomplete` | 6.20.4 | `apps/desktop` | Completion popup, snippets and auto-closing brackets. |
 | `@codemirror/commands` | 6.11.1 | `apps/desktop` | Editing keybindings and undo history. |
 | `@codemirror/language` | 6.13.1 | `apps/desktop` | Syntax highlighting, indentation and bracket matching. |
 | `@codemirror/search` | 6.7.2 | `apps/desktop` | Find and replace. |

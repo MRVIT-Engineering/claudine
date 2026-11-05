@@ -118,3 +118,21 @@ export const MonitorIcon = (p: IconProps) => (
     <path d="M8 20h8M12 16v4" />
   </Svg>
 );
+export const FilesIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <path d="M15 3H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7Z" />
+    <path d="M15 3v4h4M3 7v13a1 1 0 0 0 1 1h11" />
+  </Svg>
+);
+export const SearchIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.5-4.5" />
+  </Svg>
+);
+export const SunIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+  </Svg>
+);

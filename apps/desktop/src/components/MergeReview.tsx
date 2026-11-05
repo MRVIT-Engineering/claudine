@@ -1,8 +1,10 @@
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
+import { search } from "@codemirror/search";
 import { EditorState, type Extension, RangeSet, Text } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
+  drawSelection,
   EditorView,
   GutterMarker,
   gutter,
@@ -19,12 +21,15 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
+import { setReviewEditor } from "../lib/activeEditor";
 import {
   createEditorRoot,
   languageFor,
   sharedExtensions,
 } from "../lib/codemirror";
+import { reveal, setReveal } from "../state/store";
 import type { Decision, Segment } from "../types";
+import { createFindPanel } from "./FindPanel";
 
 export type HunkSegment = Extract<Segment, { kind: "hunk" }>;
 
@@ -189,6 +194,9 @@ function readOnlyExtensions(path: string, wrap: boolean): Extension {
     languageFor(path),
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
+    EditorView.editorAttributes.of({ class: "cm-review" }),
+    drawSelection(),
+    search({ top: true, createPanel: createFindPanel }),
     wrap ? EditorView.lineWrapping : [],
   ];
 }
@@ -209,6 +217,8 @@ export function MergeReview(props: {
   let measureBars = () => {};
   const plan = createMemo(() => buildPlan(props.segments, props.decisionOf));
   const [tops, setTops] = createSignal<number[]>([]);
+  // The Original side, where project search results are shown.
+  const [original, setOriginal] = createSignal<EditorView | null>(null);
 
   onMount(() => {
     root = createEditorRoot(host);
@@ -264,7 +274,12 @@ export function MergeReview(props: {
           highlightChanges: false,
         });
         barView = merge.b;
-        destroy = () => merge.destroy();
+        setOriginal(merge.a);
+        setReviewEditor(merge.b);
+        destroy = () => {
+          setReviewEditor((v) => (v === merge.b ? null : v));
+          merge.destroy();
+        };
       } else {
         const view = new EditorView({
           state: EditorState.create({
@@ -285,10 +300,32 @@ export function MergeReview(props: {
           root,
         });
         barView = view;
-        destroy = () => view.destroy();
+        setOriginal(null);
+        setReviewEditor(view);
+        destroy = () => {
+          setReviewEditor((v) => (v === view ? null : v));
+          view.destroy();
+        };
       }
       measureBars = measure;
       measure();
+    });
+
+    createEffect(() => {
+      const target = reveal();
+      const view = original();
+      if (!target || !view || target.path !== props.path) return;
+      setReveal(null);
+      const line = view.state.doc.line(
+        Math.min(target.line, view.state.doc.lines),
+      );
+      view.dispatch({
+        selection: {
+          anchor: line.from + target.start,
+          head: line.from + target.end,
+        },
+        effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+      });
     });
 
     const observer = new ResizeObserver(() => measureBars());
