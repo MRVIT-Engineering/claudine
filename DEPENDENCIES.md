@@ -16,6 +16,14 @@ Every direct dependency, with the reason it's here.
 | Package | Version | Used by | Reason |
 |---|---|---|---|
 | `solid-js` | 1.9.17 | `apps/desktop` | UI framework. |
+| `@codemirror/view` | 6.43.15 | `apps/desktop` | The code editor's DOM view. |
+| `@codemirror/state` | 6.7.6 | `apps/desktop` | Editor documents, selections and transactions. |
+| `@codemirror/commands` | 6.11.1 | `apps/desktop` | Editing keybindings and undo history. |
+| `@codemirror/language` | 6.13.1 | `apps/desktop` | Syntax highlighting, indentation and bracket matching. |
+| `@codemirror/search` | 6.7.2 | `apps/desktop` | Find and replace. |
+| `@codemirror/merge` | 6.12.3 | `apps/desktop` | Aligned side-by-side and inline diff review. |
+| `@codemirror/lang-rust` | 6.0.2 | `apps/desktop` | Rust syntax support. |
+| `@lezer/highlight` | 1.2.5 | `apps/desktop` | Maps syntax tokens to our theme's classes, and colors code outside the editor. |
 | `@tauri-apps/api` | 2.12.4 | `apps/desktop` | `invoke`, the call from the UI to Rust commands. |
 | `@tauri-apps/cli` | 2.12.4 | `apps/desktop` (dev) | `tauri dev` and `tauri build`. |
 | `typescript` | 7.0.2 | `apps/desktop` (dev) | Type checking with `tsc --noEmit`. |

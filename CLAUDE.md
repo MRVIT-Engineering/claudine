@@ -34,6 +34,7 @@ Run from the repo root:
 
 - **New Tauri command:** add it to `AppManifest::commands` in `apps/desktop/src-tauri/build.rs` and grant only what's needed in `capabilities/`. Commands are deny-by-default.
 - **Capabilities and CSP:** keep them minimal. Don't add `core:default`, fs, shell, http or opener permissions, remote sources or `unsafe-eval` without asking.
+- **CodeMirror:** mount every editor in a shadow root through `createEditorRoot` in `apps/desktop/src/lib/codemirror.tsx`, and pass it as `root`. In a normal document CodeMirror adds a `<style>` tag, which the CSP blocks. Don't relax `style-src` to work around this.
 - **Devtools:** never enable tauri's `devtools` Cargo feature; it would ship the inspector in release builds.
 - **Dependencies:** check the current version before pinning. Ask before adding one, and prefer ~20 lines of code over a dependency.
 - **npm release age:** `minimumReleaseAge` is 7 days, so pin versions at least that old. Don't add entries to `allowBuilds` without review.
