@@ -1,10 +1,38 @@
-# my-editor
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/app-icon.png" alt="Claudine, a purple pixel creature with a bow" width="128" height="128">
+</p>
 
-A security-first desktop code editor that wraps the official `claude` CLI. `my-editor` is a placeholder name.
+<h1 align="center">Claudine</h1>
 
-It will run `claude` in an embedded terminal, show full-file diffs of Claude's edits via Claude Code hooks, and have a file tree. It has no extension system, no marketplace, and no network access from the app itself.
+<p align="center">
+  A security-first desktop code editor built around the official <code>claude</code> CLI.
+</p>
 
-**Status:** opens a real folder (⌘O), browses its files and opens them in the editor. Edits stay in memory, because saving isn't built yet. Claude isn't connected: the session, chat, Parallel and Accounts screens are a design preview, hidden behind `PREVIEW_CLAUDE` in `apps/desktop/src/lib/flags.ts`.
+---
+
+Claudine is a small, fast editor for working with Claude Code. Claude runs in a chat panel next to your files, and every edit and command waits for your approval. The rules that keep you safe live in the Rust backend, not in the UI.
+
+The packages still use the placeholder name `my-editor`.
+
+## What it does today
+
+- **Open a folder and browse it.** ⌘O opens any folder; the file tree, ⌘⇧O (go to file) and ⌘⇧F (search the project) all work on real files.
+- **Read and edit code.** A CodeMirror 6 editor with VS Code-style shortcuts, find and replace, folding, and syntax highlighting for 140+ languages. Edits stay in memory for now, because saving isn't built yet.
+- **Talk to Claude Code.** The Claude panel starts your own `claude` install in the open folder. Each file write, edit or command shows up as a request with the content or diff, and runs only after you click Allow.
+- **Settings that stick.** Theme, accent, fonts, editor options, hidden files and panel widths are saved per user.
+
+The session, Parallel and Accounts screens from the design are still a preview on mock data, hidden behind `PREVIEW_CLAUDE` in `apps/desktop/src/lib/flags.ts`. See [the development plan](docs/DEVELOPMENT_PLAN.md) for what comes next.
+
+## Security, in short
+
+- **The webview is untrusted.** Path checks, approvals and trust decisions are made in Rust. The UI can only ask.
+- **Files stay inside the project.** Every file access goes through a path guard built on [`cap-std`](https://github.com/bytecodealliance/cap-std), which also closes symlink races.
+- **Approvals can't be changed by the UI.** Rust keeps each permission request from Claude. The UI answers with an id and yes or no, and Rust sends Claude the input it kept.
+- **Folders are trusted explicitly.** Before Claude first runs in a folder, Claudine asks natively, because a project's `.claude/` and `.mcp.json` can run commands.
+- **No network from the app.** Only the `claude` process talks to the network. No telemetry, no plugins, no extension marketplace, no remote code.
+- **Your own Claude Code.** Claudine never bundles, downloads or installs it.
+
+[SECURITY.md](SECURITY.md) has the full list, including known limits.
 
 ## Prerequisites
 
@@ -12,8 +40,10 @@ It will run `claude` in an embedded terminal, show full-file diffs of Claude's e
 - **Node.js** 22.12 or newer.
 - **pnpm**. Any recent version works: it switches to the version pinned in `package.json`.
 - **Tauri system dependencies** for your OS: see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
-- **Claude Code**, installed separately from Anthropic's [official channel](https://docs.anthropic.com/en/docs/claude-code). This app never bundles or installs it.
+- **Claude Code**, installed separately from Anthropic's [official channel](https://docs.anthropic.com/en/docs/claude-code), and signed in once in a terminal.
 - **cargo-deny**, to run the dependency checks: `cargo install cargo-deny --locked`.
+
+macOS and Linux are supported first. Windows needs its own security review.
 
 ## Development
 
@@ -32,10 +62,11 @@ cargo deny check  # licenses, advisories, sources
 | Path | What it is |
 |---|---|
 | `apps/desktop/src` | SolidJS + TypeScript UI, treated as untrusted |
-| `apps/desktop/src-tauri` | Rust backend for the app |
+| `apps/desktop/src-tauri` | Rust backend: project files, settings, Claude sessions |
 | `crates/core` | Security logic: path guard, tripwire, audit log |
 | `crates/protocol` | Message types shared between the hook and the app |
 | `crates/hook` | Hook binary, later bundled as a Tauri sidecar |
+| `docs/DEVELOPMENT_PLAN.md` | Milestones and open decisions |
 | `docs/rust-learning` | Rust learning progress |
 
-See [SECURITY.md](SECURITY.md) for the security invariants and [DEPENDENCIES.md](DEPENDENCIES.md) for why each dependency is here.
+[CLAUDE.md](CLAUDE.md) has the rules for changing the code, and [DEPENDENCIES.md](DEPENDENCIES.md) explains why each dependency is here.
