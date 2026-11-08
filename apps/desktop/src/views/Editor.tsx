@@ -2,11 +2,14 @@ import {
   createEffect,
   createSignal,
   For,
+  Match,
   on,
   onCleanup,
   onMount,
   Show,
+  Switch,
 } from "solid-js";
+import { type DirEntry, describeError, hasBackend } from "../backend";
 import { CodeEditor } from "../components/CodeEditor";
 import { AccountChip, Empty } from "../components/Common";
 import { openFindInActive } from "../components/FindPanel";
@@ -18,27 +21,36 @@ import {
   FileIcon,
   FilesIcon,
   FolderIcon,
+  FolderOpenIcon,
   PlusIcon,
   SearchIcon,
   SplitIcon,
   SunIcon,
 } from "../components/Icons";
+import { Mascot } from "../components/Mascot";
 import { MergeReview } from "../components/MergeReview";
-import { FILES, TREE } from "../mock/data";
+import { Resizer } from "../components/Resizer";
+import { PREVIEW_CLAUDE } from "../lib/flags";
 import {
   accountOf,
   activeSession,
   approveEdit,
   closeTab,
   composerFocus,
+  DEFAULT_SETTINGS,
   decideAll,
   decideHunk,
   decisionOf,
   declineEdit,
+  dirEntries,
+  fileName,
   hunkCounts,
   letterOf,
   lineStats,
+  openError,
   openFile,
+  openProjectFolder,
+  proposalFor,
   resolvedText,
   resolvePermission,
   selectSession,
@@ -49,100 +61,225 @@ import {
   state,
   toggleFolder,
   updateSettings,
+  WIDTHS,
 } from "../state/store";
-import type { Session, SourceFile, TranscriptItem, TreeNode } from "../types";
+import type { Session, SourceFile, TranscriptItem } from "../types";
 import { focusProjectSearch, SearchPanel } from "./SearchPanel";
 
 function sessionForFile(path: string): Session | undefined {
   return state.sessions.find((s) => s.file === path);
 }
 
-/** Folders first, then files, each alphabetically, as in VS Code. */
-function sortedNodes(nodes: TreeNode[]): TreeNode[] {
-  return [...nodes].sort((a, b) => {
-    if (!!a.children !== !!b.children) return a.children ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-  });
+function TreeItem(props: { entry: DirEntry; depth: number }) {
+  const expanded = () => state.expanded.includes(props.entry.path);
+  const session = () => sessionForFile(props.entry.path);
+  const account = () => {
+    const s = session();
+    return s ? accountOf(s.accountId) : undefined;
+  };
+  return (
+    <li>
+      <button
+        type="button"
+        class={`tree-row depth-${Math.min(props.depth, 5)}`}
+        classList={{
+          active: !props.entry.isDir && state.activeTab === props.entry.path,
+          symlink: props.entry.isSymlink,
+        }}
+        title={props.entry.isSymlink ? "Symbolic link" : undefined}
+        aria-expanded={props.entry.isDir ? expanded() : undefined}
+        onClick={() =>
+          props.entry.isDir
+            ? toggleFolder(props.entry.path)
+            : openFile(props.entry.path)
+        }
+      >
+        <Show
+          when={props.entry.isDir}
+          fallback={
+            <>
+              <span class="tree-chevron" />
+              <span class="tree-file">
+                <FileIcon size={13} />
+              </span>
+            </>
+          }
+        >
+          <span class="tree-chevron">
+            <Show when={expanded()} fallback={<ChevronRight size={12} />}>
+              <ChevronDown size={12} />
+            </Show>
+          </span>
+          <span class="tree-folder">
+            <FolderIcon size={13} />
+          </span>
+        </Show>
+        <span class="tree-name">{props.entry.name}</span>
+        <Show when={account()}>
+          {(a) => (
+            <span class={`tree-letter acct-${a().color}`}>
+              {letterOf(a().label)}
+            </span>
+          )}
+        </Show>
+      </button>
+      <Show when={props.entry.isDir && expanded()}>
+        <FileTree path={props.entry.path} depth={props.depth + 1} />
+      </Show>
+    </li>
+  );
 }
 
-function FileTree(props: { nodes: TreeNode[]; depth: number }) {
+/** One folder's entries, loaded from Rust the first time it's shown. */
+function FileTree(props: { path: string; depth: number }) {
+  const listing = () => dirEntries(props.path);
+  const entries = () => {
+    const l = listing();
+    return l?.status === "ready" ? l.value : undefined;
+  };
+  const failure = () => {
+    const l = listing();
+    return l?.status === "error" ? l.error : undefined;
+  };
+  const indent = () => `tree-status depth-${Math.min(props.depth, 5)}`;
   return (
-    <ul class="tree">
-      <For each={sortedNodes(props.nodes)}>
-        {(node) => {
-          const collapsed = () => state.collapsed.includes(node.path);
-          const session = () => sessionForFile(node.path);
-          const account = () => {
-            const s = session();
-            return s ? accountOf(s.accountId) : undefined;
-          };
-          return (
-            <li>
-              <button
-                type="button"
-                class={`tree-row depth-${Math.min(props.depth, 5)}`}
-                classList={{
-                  active: !node.children && state.activeTab === node.path,
-                }}
-                aria-expanded={node.children ? !collapsed() : undefined}
-                onClick={() =>
-                  node.children ? toggleFolder(node.path) : openFile(node.path)
-                }
-              >
-                <Show
-                  when={node.children}
-                  fallback={
-                    <>
-                      <span class="tree-chevron" />
-                      <span class="tree-file">
-                        <FileIcon size={13} />
-                      </span>
-                    </>
-                  }
-                >
-                  <span class="tree-chevron">
-                    <Show
-                      when={collapsed()}
-                      fallback={<ChevronDown size={12} />}
-                    >
-                      <ChevronRight size={12} />
-                    </Show>
-                  </span>
-                  <span class="tree-folder">
-                    <FolderIcon size={13} />
-                  </span>
-                </Show>
-                <span class="tree-name">{node.name}</span>
-                <Show when={account()}>
-                  {(a) => (
-                    <span class={`tree-letter acct-${a().color}`}>
-                      {letterOf(a().label)}
-                    </span>
-                  )}
-                </Show>
-              </button>
-              <Show when={node.children && !collapsed()}>
-                <FileTree nodes={node.children ?? []} depth={props.depth + 1} />
-              </Show>
-            </li>
-          );
-        }}
-      </For>
-    </ul>
+    <Switch fallback={<p class={indent()}>Loading…</p>}>
+      <Match when={failure()}>
+        {(error) => <p class={`${indent()} error`}>{describeError(error())}</p>}
+      </Match>
+      <Match when={entries()}>
+        {(list) => (
+          <Show
+            when={list().length > 0}
+            fallback={<p class={indent()}>Empty folder</p>}
+          >
+            <ul class="tree">
+              <For each={list()}>
+                {(entry) => <TreeItem entry={entry} depth={props.depth} />}
+              </For>
+            </ul>
+          </Show>
+        )}
+      </Match>
+    </Switch>
   );
 }
 
 function Explorer() {
   return (
     <aside class="sidebar explorer">
-      <h2 class="section-title">Explorer</h2>
-      <div class="explorer-scroll">
-        <FileTree nodes={TREE} depth={0} />
+      <div class="sidebar-head">
+        <h2 class="section-title">Explorer</h2>
+        <Show when={state.project}>
+          <button
+            type="button"
+            class="icon-btn"
+            title="Open Folder… (⌘O)"
+            aria-label="Open folder"
+            onClick={() => void openProjectFolder()}
+          >
+            <FolderOpenIcon size={14} />
+          </button>
+        </Show>
       </div>
-      <p class="explorer-note">
-        Letters show which account's session is touching a file.
-      </p>
+      <Show
+        when={state.project}
+        fallback={
+          <div class="explorer-empty">
+            <p class="muted">No folder open.</p>
+            <button
+              type="button"
+              class="btn btn-accent"
+              disabled={!hasBackend()}
+              onClick={() => void openProjectFolder()}
+            >
+              Open Folder
+            </button>
+          </div>
+        }
+      >
+        {(project) => (
+          <>
+            <p class="project-name" title={project().name}>
+              {project().name}
+            </p>
+            <div class="explorer-scroll">
+              <FileTree path="" depth={0} />
+            </div>
+          </>
+        )}
+      </Show>
+      <Show when={PREVIEW_CLAUDE}>
+        <p class="explorer-note">
+          Letters show which account's session is touching a file.
+        </p>
+      </Show>
     </aside>
+  );
+}
+
+/** Shown when no folder is open. */
+function Welcome() {
+  return (
+    <div class="welcome">
+      <Mascot size={88} class="hero-mascot" />
+      <h1>Open a folder to start</h1>
+      <p class="lede">
+        Claudine shows the folder's files and lets you browse and edit them.
+        Saving comes next.
+      </p>
+      <Show
+        when={hasBackend()}
+        fallback={
+          <p class="welcome-error">{describeError({ kind: "unavailable" })}</p>
+        }
+      >
+        <button
+          type="button"
+          class="btn btn-lg btn-accent"
+          onClick={() => void openProjectFolder()}
+        >
+          Open Folder <kbd>⌘O</kbd>
+        </button>
+      </Show>
+      <Show when={openError()}>
+        {(error) => <p class="welcome-error">{describeError(error())}</p>}
+      </Show>
+    </div>
+  );
+}
+
+/** A real file from disk: loading, a reason it can't be shown, or the editor. */
+function DiskFileView(props: { path: string }) {
+  const loaded = () => state.files[props.path];
+  const ready = () => {
+    const file = loaded();
+    return file?.status === "ready" ? { text: file.value } : undefined;
+  };
+  const failure = () => {
+    const file = loaded();
+    return file?.status === "error" ? file.error : undefined;
+  };
+  return (
+    <Switch fallback={<Empty title="Loading…" />}>
+      <Match when={failure()}>
+        {(error) => (
+          <Empty title={`Can't open ${fileName(props.path)}`}>
+            {describeError(error())}
+            <button
+              type="button"
+              class="btn btn-sm"
+              onClick={() => openFile(props.path)}
+            >
+              Try again
+            </button>
+          </Empty>
+        )}
+      </Match>
+      <Match when={ready()}>
+        {(file) => <CodeEditor path={props.path} text={file().text} />}
+      </Match>
+    </Switch>
   );
 }
 
@@ -152,7 +289,6 @@ function Tabs() {
       <div class="file-tabs" role="tablist" aria-label="Open files">
         <For each={state.openTabs}>
           {(path) => {
-            const file = FILES[path];
             const stats = () => lineStats(path);
             const proposed = () =>
               path === state.activeTab && hunkCounts(path).pending > 0;
@@ -171,7 +307,7 @@ function Tabs() {
                   <Show when={proposed()}>
                     <SplitIcon size={13} />
                   </Show>
-                  <span>{file?.name}</span>
+                  <span>{fileName(path)}</span>
                   <Show when={state.dirty[path]}>
                     <span class="dirty-dot" title="Unsaved changes" />
                   </Show>
@@ -186,7 +322,7 @@ function Tabs() {
                 <button
                   type="button"
                   class="file-tab-close"
-                  aria-label={`Close ${file?.name}`}
+                  aria-label={`Close ${fileName(path)}`}
                   onClick={() => closeTab(path)}
                 >
                   <CloseIcon size={11} />
@@ -278,7 +414,8 @@ function ActivityBar() {
   );
 }
 
-function FileView(props: { file: SourceFile }) {
+/** A proposed change under review, in the design preview. */
+function ReviewView(props: { file: SourceFile }) {
   const path = () => props.file.path;
   const session = () => sessionForFile(path());
   const account = () => {
@@ -522,7 +659,7 @@ function ChatItem(props: { item: TranscriptItem; session: Session }) {
 
 function ApprovalCard(props: { session: Session }) {
   const file = () =>
-    props.session.file ? FILES[props.session.file]?.name : "this file";
+    props.session.file ? fileName(props.session.file) : "this file";
   const options = [
     { key: "1", label: "Yes", run: () => approveEdit(props.session, false) },
     {
@@ -605,7 +742,8 @@ export function PermissionCard(props: {
 function Composer(props: { session: Session }) {
   const [text, setText] = createSignal("");
   let input!: HTMLTextAreaElement;
-  const activeName = () => FILES[state.activeTab]?.name;
+  const activeName = () =>
+    state.activeTab ? fileName(state.activeTab) : undefined;
 
   createEffect(
     on(
@@ -772,27 +910,64 @@ function PermissionCardFor(props: { session: Session; command: string }) {
 }
 
 export function Editor() {
-  const file = () => FILES[state.activeTab];
   return (
-    <div class="editor-layout">
+    <div class="editor-layout" classList={{ "no-chat": !PREVIEW_CLAUDE }}>
       <ActivityBar />
-      <Show when={state.sidebar === "search"} fallback={<Explorer />}>
-        <SearchPanel />
-      </Show>
+      <div class="sidebar-slot">
+        <Show when={state.sidebar === "search"} fallback={<Explorer />}>
+          <SearchPanel />
+        </Show>
+        <Resizer
+          label="Resize side bar"
+          edge="right"
+          value={state.settings.sidebarWidth}
+          min={WIDTHS.sidebarWidth[0]}
+          max={WIDTHS.sidebarWidth[1]}
+          defaultValue={DEFAULT_SETTINGS.sidebarWidth}
+          onChange={(sidebarWidth) => updateSettings({ sidebarWidth })}
+        />
+      </div>
       <main class="editor-main">
-        <Tabs />
-        <Show when={file()}>{(f) => <Breadcrumb path={f().path} />}</Show>
-        <Show
-          when={file()}
-          keyed
-          fallback={
-            <Empty title="No file open">Pick a file in the explorer.</Empty>
-          }
-        >
-          {(f) => <FileView file={f} />}
+        <Show when={state.project} fallback={<Welcome />}>
+          <Tabs />
+          <Show
+            when={state.activeTab}
+            keyed
+            fallback={
+              <Empty title="No file open">
+                Pick a file in the explorer, or press ⌘⇧O to go to a file.
+              </Empty>
+            }
+          >
+            {(path) => (
+              <>
+                <Breadcrumb path={path} />
+                <Show
+                  when={proposalFor(path)}
+                  keyed
+                  fallback={<DiskFileView path={path} />}
+                >
+                  {(proposal) => <ReviewView file={proposal} />}
+                </Show>
+              </>
+            )}
+          </Show>
         </Show>
       </main>
-      <ChatPanel />
+      <Show when={PREVIEW_CLAUDE}>
+        <div class="sidebar-slot">
+          <ChatPanel />
+          <Resizer
+            label="Resize chat"
+            edge="left"
+            value={state.settings.chatWidth}
+            min={WIDTHS.chatWidth[0]}
+            max={WIDTHS.chatWidth[1]}
+            defaultValue={DEFAULT_SETTINGS.chatWidth}
+            onChange={(chatWidth) => updateSettings({ chatWidth })}
+          />
+        </div>
+      </Show>
     </div>
   );
 }

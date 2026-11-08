@@ -1,7 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import { AccountBadge, Empty, STATUS_LABEL } from "../components/Common";
 import { highlight } from "../lib/codemirror";
-import { FILES } from "../mock/data";
+import { PROPOSALS } from "../mock/data";
 import {
   accountOf,
   decideAll,
@@ -62,7 +62,7 @@ function SessionColumn(props: { session: Session }) {
   const account = () => accountOf(props.session.accountId);
   const [reply, setReply] = createSignal("");
   const file = () =>
-    props.session.file ? FILES[props.session.file] : undefined;
+    props.session.file ? PROPOSALS[props.session.file] : undefined;
   const pending = () =>
     props.session.file ? hunkCounts(props.session.file).pending : 0;
 

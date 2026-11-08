@@ -1,9 +1,6 @@
-// Everything in this file is placeholder data. Once the Rust backend exists,
-// it replaces this file and the actions in state/store.ts.
-import type { Account, Segment, Session, SourceFile, TreeNode } from "../types";
-
-export const PROJECT_PATH = "~/code/claudine";
-export const BRANCH = "main";
+// Design-preview data for the session, chat and Parallel screens. Used only when
+// PREVIEW_CLAUDE in lib/flags.ts is on. Real files come from backend.ts.
+import type { Account, Segment, Session, SourceFile } from "../types";
 
 export const DEMO_ACCOUNTS: Account[] = [
   {
@@ -139,7 +136,8 @@ const DIFF_SPEC_LINES = [
   "// More cases are still being written.",
 ];
 
-export const FILES: Record<string, SourceFile> = {
+/** Proposed changes shown in the design preview, by file path. */
+export const PROPOSALS: Record<string, SourceFile> = {
   "src/session/pool.rs": {
     path: "src/session/pool.rs",
     name: "pool.rs",
@@ -151,29 +149,6 @@ export const FILES: Record<string, SourceFile> = {
       { type: "ctx", text: "}" },
     ],
   },
-  "src/session/account.rs": {
-    path: "src/session/account.rs",
-    name: "account.rs",
-    lines: [
-      "use std::path::PathBuf;",
-      "",
-      "pub struct Account {",
-      "    pub label: String,",
-      "    pub config_dir: PathBuf,",
-      "}",
-    ],
-  },
-  "src/diff/render.rs": {
-    path: "src/diff/render.rs",
-    name: "render.rs",
-    lines: [
-      "use super::Diff;",
-      "",
-      "pub fn side_by_side(diff: &Diff) -> Vec<Row> {",
-      "    diff.hunks.iter().flat_map(Hunk::rows).collect()",
-      "}",
-    ],
-  },
   "src/config.rs": {
     path: "src/config.rs",
     name: "config.rs",
@@ -183,19 +158,6 @@ export const FILES: Record<string, SourceFile> = {
       { type: "del", text: "let cfg = serde_json::from_slice(&raw)?;" },
       { type: "add", text: "let raw = fs::read_to_string(path)?;" },
       { type: "add", text: "let cfg: Config = toml::from_str(&raw)?;" },
-    ],
-  },
-  "src/main.rs": {
-    path: "src/main.rs",
-    name: "main.rs",
-    lines: [
-      "mod config;",
-      "mod diff;",
-      "mod session;",
-      "",
-      "fn main() {",
-      '    println!("claudine");',
-      "}",
     ],
   },
   "tests/diff_spec.rs": {
@@ -216,58 +178,7 @@ export const FILES: Record<string, SourceFile> = {
       text,
     })),
   },
-  "Cargo.toml": {
-    path: "Cargo.toml",
-    name: "Cargo.toml",
-    lines: [
-      "[package]",
-      'name = "claudine"',
-      'version = "0.1.0"',
-      'edition = "2024"',
-      "",
-      "[dependencies]",
-      'tokio = { version = "1", features = ["sync"] }',
-    ],
-  },
-  "README.md": {
-    path: "README.md",
-    name: "README.md",
-    lines: ["# claudine", "", "Sample project used as mock editor content."],
-  },
 };
-
-export const TREE: TreeNode[] = [
-  {
-    name: "src",
-    path: "src",
-    children: [
-      {
-        name: "session",
-        path: "src/session",
-        children: [
-          { name: "pool.rs", path: "src/session/pool.rs" },
-          { name: "account.rs", path: "src/session/account.rs" },
-        ],
-      },
-      {
-        name: "diff",
-        path: "src/diff",
-        children: [{ name: "render.rs", path: "src/diff/render.rs" }],
-      },
-      { name: "config.rs", path: "src/config.rs" },
-      { name: "main.rs", path: "src/main.rs" },
-    ],
-  },
-  {
-    name: "tests",
-    path: "tests",
-    children: [{ name: "diff_spec.rs", path: "tests/diff_spec.rs" }],
-  },
-  { name: "Cargo.toml", path: "Cargo.toml" },
-  { name: "README.md", path: "README.md" },
-];
-
-export const INITIAL_COLLAPSED = ["src/diff"];
 
 export function demoSessions(): Session[] {
   return [
@@ -353,38 +264,3 @@ export function demoSessions(): Session[] {
     },
   ];
 }
-
-export const SETTINGS_PREVIEW: Segment[] = [
-  {
-    kind: "context",
-    lines: [
-      "impl SessionPool {",
-      "    pub fn new(accounts: &[Account]) -> Self {",
-    ],
-  },
-  {
-    kind: "hunk",
-    id: "preview",
-    title: "",
-    removed: [
-      "        let sessions = accounts.iter().map(Session::new).collect();",
-    ],
-    added: [
-      "        let n = accounts.len();",
-      "        let sessions = accounts.iter().collect();",
-      "        let limit = Arc::new(Semaphore::new(n));",
-    ],
-  },
-  {
-    kind: "context",
-    lines: [
-      "        Self { sessions, limit }",
-      "    }",
-      "",
-      "    pub fn is_empty(&self) -> bool {",
-      "        self.sessions.len() == 0",
-      "    }",
-      "}",
-    ],
-  },
-];

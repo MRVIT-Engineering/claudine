@@ -1,40 +1,80 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createResource, For, type JSX, Match, Show, Switch } from "solid-js";
+import {
+  createResource,
+  createSignal,
+  For,
+  type JSX,
+  Match,
+  Show,
+  Switch,
+} from "solid-js";
+import { hasBackend } from "../backend";
 import { Toggle } from "../components/Common";
 import {
+  CloseIcon,
   CodeIcon,
+  FilesIcon,
   MinusIcon,
   MonitorIcon,
   PaletteIcon,
   PlusIcon,
   UsersIcon,
 } from "../components/Icons";
+import { Mascot } from "../components/Mascot";
 import { MergeReview } from "../components/MergeReview";
-import { SETTINGS_PREVIEW } from "../mock/data";
+import { Resizer } from "../components/Resizer";
+import { PREVIEW_CLAUDE } from "../lib/flags";
+import { SETTINGS_PREVIEW } from "../lib/samples";
 import {
   ACCENTS,
+  DEFAULT_SETTINGS,
   EDITOR_FONTS,
   MAX_FONT_SIZE,
+  MAX_TAB_SIZE,
   MIN_FONT_SIZE,
   navigate,
+  resetAllSettings,
   resetAppearance,
+  resetEditor,
+  resetExcludedNames,
   restartSetup,
+  saveStatus,
   state,
+  updatePreview,
   updateSettings,
+  WIDTHS,
 } from "../state/store";
-import type { SettingsSection } from "../types";
+import type { Settings, SettingsSection } from "../types";
 import { AccountList, SessionDefaults } from "./Accounts";
 
-const SECTIONS: {
+const ALL_SECTIONS: {
   key: SettingsSection;
   label: string;
   icon: () => JSX.Element;
+  preview?: boolean;
 }[] = [
   { key: "appearance", label: "Appearance", icon: () => <PaletteIcon /> },
   { key: "editor", label: "Editor", icon: () => <CodeIcon /> },
-  { key: "accounts", label: "Claude accounts", icon: () => <UsersIcon /> },
-  { key: "sessions", label: "Sessions", icon: () => <MonitorIcon /> },
+  { key: "files", label: "Files", icon: () => <FilesIcon /> },
+  {
+    key: "accounts",
+    label: "Claude accounts",
+    icon: () => <UsersIcon />,
+    preview: true,
+  },
+  {
+    key: "sessions",
+    label: "Sessions",
+    icon: () => <MonitorIcon />,
+    preview: true,
+  },
+  { key: "about", label: "About", icon: () => <Mascot size={15} /> },
 ];
+
+// Accounts and session defaults belong to the hidden design preview.
+const SECTIONS = ALL_SECTIONS.filter(
+  (section) => PREVIEW_CLAUDE || !section.preview,
+);
 
 function SettingRow(props: {
   title: string;
@@ -51,6 +91,27 @@ function SettingRow(props: {
     </div>
   );
 }
+
+/** A setting row with an on/off switch, for any boolean setting. */
+function ToggleRow(props: {
+  title: string;
+  text: string;
+  setting: BooleanKey;
+}) {
+  return (
+    <SettingRow title={props.title} text={props.text}>
+      <Toggle
+        label={props.title}
+        checked={state.settings[props.setting]}
+        onChange={(value) => updateSettings({ [props.setting]: value })}
+      />
+    </SettingRow>
+  );
+}
+
+type BooleanKey = {
+  [K in keyof Settings]: Settings[K] extends boolean ? K : never;
+}[keyof Settings];
 
 function Segmented<T extends string>(props: {
   label: string;
@@ -75,6 +136,15 @@ function Segmented<T extends string>(props: {
         )}
       </For>
     </fieldset>
+  );
+}
+
+function SectionHead(props: { title: string; text: string }) {
+  return (
+    <>
+      <h1>{props.title}</h1>
+      <p class="lede">{props.text}</p>
+    </>
   );
 }
 
@@ -115,11 +185,13 @@ function Appearance() {
     Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, n));
   return (
     <>
-      <h1>Appearance</h1>
-      <p class="lede">Theme, colors and type for the whole app.</p>
+      <SectionHead
+        title="Appearance"
+        text="Theme, colors and type for the whole app."
+      />
       <SettingRow
         title="Theme"
-        text="The whole app follows this, editor included."
+        text="System follows your computer's light or dark mode."
       >
         <Segmented
           label="Theme"
@@ -127,6 +199,7 @@ function Appearance() {
           options={[
             { value: "dark", label: "Dark" },
             { value: "light", label: "Light" },
+            { value: "system", label: "System" },
           ]}
           onChange={(theme) => updateSettings({ theme })}
         />
@@ -193,54 +266,150 @@ function Appearance() {
           </button>
         </div>
       </SettingRow>
+      <SettingRow title="Line height" text="Space between lines of code.">
+        <input
+          class="slider"
+          type="range"
+          aria-label="Line height"
+          min="1.2"
+          max="2.2"
+          step="0.1"
+          value={state.settings.lineHeight}
+          onInput={(e) =>
+            updateSettings({ lineHeight: Number(e.currentTarget.value) })
+          }
+        />
+        <code class="setting-value">
+          {state.settings.lineHeight.toFixed(1)}
+        </code>
+      </SettingRow>
       <SettingRow
         title="Editor font"
-        text="Any monospaced font installed on your machine."
+        text="Uses the font if it's installed on your machine."
       >
         <select
           class="input"
           aria-label="Editor font"
           value={state.settings.editorFont}
-          onChange={(e) =>
-            updateSettings({
-              editorFont: EDITOR_FONTS.find(
-                (f) => f.key === e.currentTarget.value,
-              )?.key,
-            })
-          }
+          onChange={(e) => {
+            const font = EDITOR_FONTS.find(
+              (f) => f.key === e.currentTarget.value,
+            );
+            if (font) updateSettings({ editorFont: font.key });
+          }}
         >
           <For each={EDITOR_FONTS}>
             {(font) => <option value={font.key}>{font.label}</option>}
           </For>
         </select>
       </SettingRow>
-      <SettingRow
+      <ToggleRow
         title="Font ligatures"
         text="Join character pairs like -> and == into one glyph."
-      >
-        <Toggle
-          label="Font ligatures"
-          checked={state.settings.ligatures}
-          onChange={(ligatures) => updateSettings({ ligatures })}
-        />
-      </SettingRow>
+        setting="ligatures"
+      />
       <button
         type="button"
         class="btn btn-lg reset-btn"
         onClick={resetAppearance}
       >
-        Reset to defaults
+        Reset appearance
       </button>
     </>
   );
 }
 
 function EditorSection() {
+  const tabSizes = [2, 3, 4, 6, 8].filter((n) => n <= MAX_TAB_SIZE);
   return (
     <>
-      <h1>Editor</h1>
-      <p class="lede">How code and diffs are shown.</p>
-      <SettingRow title="Diff layout" text="How Claude's edits are compared.">
+      <SectionHead
+        title="Editor"
+        text="How code is shown and edited. Changes apply to open files right away."
+      />
+      <SettingRow title="Tab size" text="Columns per indent level.">
+        <select
+          class="input input-narrow"
+          aria-label="Tab size"
+          value={state.settings.tabSize}
+          onChange={(e) =>
+            updateSettings({ tabSize: Number(e.currentTarget.value) })
+          }
+        >
+          <For each={tabSizes}>{(n) => <option value={n}>{n}</option>}</For>
+        </select>
+      </SettingRow>
+      <SettingRow title="Indent with" text="What Tab and new lines insert.">
+        <Segmented
+          label="Indent with"
+          value={state.settings.insertSpaces ? "spaces" : "tabs"}
+          options={[
+            { value: "spaces", label: "Spaces" },
+            { value: "tabs", label: "Tabs" },
+          ]}
+          onChange={(value) =>
+            updateSettings({ insertSpaces: value === "spaces" })
+          }
+        />
+      </SettingRow>
+      <ToggleRow
+        title="Wrap long lines"
+        text="Otherwise long lines scroll sideways."
+        setting="wrapLines"
+      />
+      <ToggleRow
+        title="Line numbers"
+        text="Show numbers in the gutter."
+        setting="lineNumbers"
+      />
+      <ToggleRow
+        title="Highlight current line"
+        text="Shade the line the cursor is on."
+        setting="highlightActiveLine"
+      />
+      <SettingRow title="Show whitespace" text="Draw spaces and tabs.">
+        <Segmented
+          label="Show whitespace"
+          value={state.settings.whitespace}
+          options={[
+            { value: "none", label: "None" },
+            { value: "trailing", label: "Trailing" },
+            { value: "all", label: "All" },
+          ]}
+          onChange={(whitespace) => updateSettings({ whitespace })}
+        />
+      </SettingRow>
+      <ToggleRow
+        title="Bracket matching"
+        text="Highlight the bracket that matches the one at the cursor."
+        setting="bracketMatching"
+      />
+      <ToggleRow
+        title="Folding"
+        text="Arrows in the gutter to collapse blocks."
+        setting="foldGutter"
+      />
+      <ToggleRow
+        title="Cursor blinking"
+        text="Off keeps the cursor solid."
+        setting="cursorBlinking"
+      />
+      <ToggleRow
+        title="Scroll past end"
+        text="Let the last line scroll up to the top."
+        setting="scrollPastEnd"
+      />
+      <ToggleRow
+        title="Suggestions while typing"
+        text="Show completions as you type. Ctrl+Space always shows them."
+        setting="suggestOnType"
+      />
+      <ToggleRow
+        title="Auto-close brackets"
+        text="Typing ( [ { or a quote adds the closing one."
+        setting="closeBrackets"
+      />
+      <SettingRow title="Diff layout" text="How proposed changes are compared.">
         <Segmented
           label="Diff layout"
           value={state.settings.diffLayout}
@@ -251,35 +420,165 @@ function EditorSection() {
           onChange={(diffLayout) => updateSettings({ diffLayout })}
         />
       </SettingRow>
-      <SettingRow
-        title="Wrap long lines"
-        text="Otherwise long lines scroll sideways."
+      <button type="button" class="btn btn-lg reset-btn" onClick={resetEditor}>
+        Reset editor settings
+      </button>
+    </>
+  );
+}
+
+function FilesSection() {
+  const [name, setName] = createSignal("");
+  const problem = () => {
+    const value = name().trim();
+    if (!value) return "";
+    if (value.includes("/") || value.includes("\\")) {
+      return "Use a name, not a path.";
+    }
+    if (state.settings.excludedNames.includes(value)) return "Already hidden.";
+    return "";
+  };
+  const add = (event: SubmitEvent) => {
+    event.preventDefault();
+    const value = name().trim();
+    if (!value || problem()) return;
+    updateSettings({ excludedNames: [...state.settings.excludedNames, value] });
+    setName("");
+  };
+  const remove = (value: string) =>
+    updateSettings({
+      excludedNames: state.settings.excludedNames.filter((n) => n !== value),
+    });
+
+  return (
+    <>
+      <SectionHead
+        title="Files"
+        text="What the explorer, Go to file and search leave out."
+      />
+      <div class="setting-block">
+        <strong>Hidden names</strong>
+        <span class="muted">
+          Files and folders with these exact names are hidden anywhere in the
+          project. Names only, not paths.
+        </span>
+        <ul class="name-chips">
+          <For each={state.settings.excludedNames}>
+            {(excluded) => (
+              <li class="name-chip">
+                <code>{excluded}</code>
+                <button
+                  type="button"
+                  class="icon-btn"
+                  aria-label={`Stop hiding ${excluded}`}
+                  onClick={() => remove(excluded)}
+                >
+                  <CloseIcon size={11} />
+                </button>
+              </li>
+            )}
+          </For>
+          <Show when={state.settings.excludedNames.length === 0}>
+            <li class="muted">Nothing is hidden.</li>
+          </Show>
+        </ul>
+        <form class="row" onSubmit={add}>
+          <input
+            class="input input-name"
+            aria-label="Name to hide"
+            placeholder="dist"
+            value={name()}
+            onInput={(e) => setName(e.currentTarget.value)}
+          />
+          <button
+            type="submit"
+            class="btn"
+            disabled={!name().trim() || !!problem()}
+          >
+            Hide
+          </button>
+          <Show when={problem()}>
+            <span class="field-error">{problem()}</span>
+          </Show>
+        </form>
+      </div>
+      <button
+        type="button"
+        class="btn btn-lg reset-btn"
+        onClick={resetExcludedNames}
       >
-        <Toggle
-          label="Wrap long lines"
-          checked={state.settings.wrapLines}
-          onChange={(wrapLines) => updateSettings({ wrapLines })}
-        />
+        Reset hidden names
+      </button>
+    </>
+  );
+}
+
+function AboutSection() {
+  const [version] = createResource(() =>
+    invoke<string>("app_version").catch(() => "browser preview"),
+  );
+  const [confirming, setConfirming] = createSignal(false);
+  return (
+    <>
+      <div class="about-head">
+        <Mascot size={56} />
+        <div>
+          <h1>Claudine</h1>
+          <p class="muted">Version {version()}</p>
+        </div>
+      </div>
+      <SettingRow
+        title="Where settings are kept"
+        text={
+          hasBackend()
+            ? "In your user's app data folder on this computer, so everyone who uses it has their own."
+            : "In this browser only. The desktop app keeps them per user."
+        }
+      >
+        <span class="muted">settings.json</span>
       </SettingRow>
       <SettingRow
-        title="Suggestions while typing"
-        text="Show completions as you type. Ctrl+Space always shows them."
+        title="First-run setup"
+        text="Show the welcome steps again. Your settings stay."
       >
-        <Toggle
-          label="Suggestions while typing"
-          checked={state.settings.suggestOnType}
-          onChange={(suggestOnType) => updateSettings({ suggestOnType })}
-        />
+        <button type="button" class="btn" onClick={restartSetup}>
+          Run setup again
+        </button>
       </SettingRow>
       <SettingRow
-        title="Auto-close brackets"
-        text="Typing ( [ { or a quote adds the closing one."
+        title="Reset all settings"
+        text="Every setting back to its default, including hidden names and sidebar widths."
       >
-        <Toggle
-          label="Auto-close brackets"
-          checked={state.settings.closeBrackets}
-          onChange={(closeBrackets) => updateSettings({ closeBrackets })}
-        />
+        <Show
+          when={confirming()}
+          fallback={
+            <button
+              type="button"
+              class="btn btn-danger"
+              onClick={() => setConfirming(true)}
+            >
+              Reset all…
+            </button>
+          }
+        >
+          <button
+            type="button"
+            class="btn"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger-solid"
+            onClick={() => {
+              resetAllSettings();
+              setConfirming(false);
+            }}
+          >
+            Reset everything
+          </button>
+        </Show>
       </SettingRow>
     </>
   );
@@ -288,8 +587,10 @@ function EditorSection() {
 function AccountsSection() {
   return (
     <>
-      <h1>Claude accounts</h1>
-      <p class="lede">Each account has its own Claude Code config folder.</p>
+      <SectionHead
+        title="Claude accounts"
+        text="Each account has its own Claude Code config folder."
+      />
       <AccountList />
       <button
         type="button"
@@ -305,8 +606,7 @@ function AccountsSection() {
 function SessionsSection() {
   return (
     <>
-      <h1>Sessions</h1>
-      <p class="lede">Defaults for new sessions.</p>
+      <SectionHead title="Sessions" text="Defaults for new sessions." />
       <SessionDefaults />
       <SettingRow
         title="Ask before edits"
@@ -314,55 +614,62 @@ function SessionsSection() {
       >
         <Toggle
           label="Ask before edits"
-          checked={state.settings.askBeforeEdits}
-          onChange={(askBeforeEdits) => updateSettings({ askBeforeEdits })}
+          checked={state.preview.askBeforeEdits}
+          onChange={(askBeforeEdits) => updatePreview({ askBeforeEdits })}
         />
-      </SettingRow>
-      <SettingRow
-        title="First-run setup"
-        text="Mock data only: clears accounts and starts setup again."
-      >
-        <button type="button" class="btn" onClick={restartSetup}>
-          Run setup again
-        </button>
       </SettingRow>
     </>
   );
 }
 
 export function SettingsView() {
-  const [version] = createResource(() =>
-    invoke<string>("app_version").catch(() => "browser preview"),
-  );
   const showPreview = () =>
     state.settingsSection === "appearance" ||
     state.settingsSection === "editor";
   return (
     <div class="settings-layout">
-      <aside class="settings-nav">
-        <h2 class="section-title">Settings</h2>
-        <nav aria-label="Settings">
-          <For each={SECTIONS}>
-            {(section) => (
-              <button
-                type="button"
-                class="settings-link"
-                classList={{ active: state.settingsSection === section.key }}
-                onClick={() => navigate("settings", section.key)}
-              >
-                {section.icon()}
-                <span>{section.label}</span>
-                <Show when={section.key === "accounts"}>
-                  <span class="spacer" />
-                  <span class="muted">{state.accounts.length}</span>
-                </Show>
-              </button>
-            )}
-          </For>
-        </nav>
-        <span class="spacer" />
-        <p class="muted version-note">Version {version()}</p>
-      </aside>
+      <div class="sidebar-slot">
+        <aside class="settings-nav">
+          <h2 class="section-title">Settings</h2>
+          <nav aria-label="Settings">
+            <For each={SECTIONS}>
+              {(section) => (
+                <button
+                  type="button"
+                  class="settings-link"
+                  classList={{ active: state.settingsSection === section.key }}
+                  onClick={() => navigate("settings", section.key)}
+                >
+                  {section.icon()}
+                  <span>{section.label}</span>
+                  <Show when={section.key === "accounts"}>
+                    <span class="spacer" />
+                    <span class="muted">{state.accounts.length}</span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </nav>
+          <span class="spacer" />
+          <p
+            class="muted version-note"
+            classList={{ "save-error": saveStatus() === "error" }}
+          >
+            {saveStatus() === "error"
+              ? "Couldn't save settings."
+              : "Settings save automatically."}
+          </p>
+        </aside>
+        <Resizer
+          label="Resize settings navigation"
+          edge="right"
+          value={state.settings.settingsNavWidth}
+          min={WIDTHS.settingsNavWidth[0]}
+          max={WIDTHS.settingsNavWidth[1]}
+          defaultValue={DEFAULT_SETTINGS.settingsNavWidth}
+          onChange={(settingsNavWidth) => updateSettings({ settingsNavWidth })}
+        />
+      </div>
       <main class="settings-main">
         <div class="settings-form">
           <Switch>
@@ -371,6 +678,12 @@ export function SettingsView() {
             </Match>
             <Match when={state.settingsSection === "editor"}>
               <EditorSection />
+            </Match>
+            <Match when={state.settingsSection === "files"}>
+              <FilesSection />
+            </Match>
+            <Match when={state.settingsSection === "about"}>
+              <AboutSection />
             </Match>
             <Match when={state.settingsSection === "accounts"}>
               <AccountsSection />

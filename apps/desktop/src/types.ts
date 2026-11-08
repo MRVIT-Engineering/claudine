@@ -60,27 +60,53 @@ export interface SourceFile {
   preview?: PreviewLine[];
 }
 
-export interface TreeNode {
-  name: string;
-  path: string;
-  children?: TreeNode[];
-}
-
 export type View = "editor" | "parallel" | "accounts" | "settings";
-export type SettingsSection = "appearance" | "editor" | "accounts" | "sessions";
-export type AccentKey = "coral" | "peach" | "rust" | "blue" | "green";
+export type SettingsSection =
+  | "appearance"
+  | "editor"
+  | "files"
+  | "about"
+  | "accounts"
+  | "sessions";
+export type AccentKey =
+  | "violet"
+  | "coral"
+  | "peach"
+  | "rust"
+  | "blue"
+  | "green";
 export type EditorFont = "jetbrains" | "sf" | "menlo" | "fira" | "system";
 
+/** Mirrors `Settings` in apps/desktop/src-tauri/src/settings.rs, which stores it. */
 export interface Settings {
-  theme: "dark" | "light";
+  theme: "dark" | "light" | "system";
   accent: AccentKey;
   fontSize: number;
   editorFont: EditorFont;
   ligatures: boolean;
-  diffLayout: "side" | "inline";
+  lineHeight: number;
+  tabSize: number;
+  insertSpaces: boolean;
   wrapLines: boolean;
+  lineNumbers: boolean;
+  highlightActiveLine: boolean;
+  whitespace: "none" | "trailing" | "all";
+  bracketMatching: boolean;
+  foldGutter: boolean;
+  cursorBlinking: boolean;
+  scrollPastEnd: boolean;
   suggestOnType: boolean;
   closeBrackets: boolean;
+  diffLayout: "side" | "inline";
+  excludedNames: string[];
+  sidebarWidth: number;
+  chatWidth: number;
+  settingsNavWidth: number;
+  setupDone: boolean;
+}
+
+/** Options for the hidden design preview. Kept in the browser, not with real settings. */
+export interface PreviewSettings {
   startOn: string;
   warnSameFile: boolean;
   worktreePerSession: boolean;

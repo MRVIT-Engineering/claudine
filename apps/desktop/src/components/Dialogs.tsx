@@ -4,6 +4,7 @@ import {
   defaultAccountId,
   dialog,
   navigate,
+  openProjectFolder,
   sendMessage,
   setDialog,
   state,
@@ -121,9 +122,42 @@ function BroadcastDialog() {
   );
 }
 
+function DiscardChangesDialog() {
+  let body!: HTMLDivElement;
+  const close = () => body.closest("dialog")?.close();
+  return (
+    <Modal title="Discard unsaved changes?" onClose={() => setDialog(null)}>
+      <div ref={body} class="modal-body">
+        <p>
+          Opening another folder closes this one. Saving isn't built yet, so
+          your unsaved edits will be lost.
+        </p>
+        <div class="row end">
+          <button type="button" class="btn" onClick={close}>
+            Keep editing
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger-solid"
+            onClick={() => {
+              close();
+              void openProjectFolder(true);
+            }}
+          >
+            Discard and open
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function Dialogs() {
   return (
     <>
+      <Show when={dialog() === "discard-changes"}>
+        <DiscardChangesDialog />
+      </Show>
       <Show when={dialog() === "new-session"}>
         <NewSessionDialog />
       </Show>

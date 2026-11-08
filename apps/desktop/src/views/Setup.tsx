@@ -8,10 +8,11 @@ import {
   CheckIcon,
   CloseIcon,
   ColumnsIcon,
-  LogoIcon,
   PlusIcon,
   SplitIcon,
 } from "../components/Icons";
+import { Mascot } from "../components/Mascot";
+import { PREVIEW_CLAUDE } from "../lib/flags";
 import {
   finishSetup,
   removeAccount,
@@ -19,7 +20,13 @@ import {
   updateSettings,
 } from "../state/store";
 
-const STEPS = ["Welcome", "Theme", "Accounts", "Ready"];
+const STEPS = PREVIEW_CLAUDE
+  ? ["Welcome", "Theme", "Accounts", "Ready"]
+  : ["Welcome", "Theme", "Ready"];
+// Step numbers, so the Accounts step can be left out.
+const THEME = 1;
+const ACCOUNTS = PREVIEW_CLAUDE ? 2 : -1;
+const READY = STEPS.length - 1;
 
 function Feature(props: { icon: JSX.Element; title: string; text: string }) {
   return (
@@ -184,7 +191,9 @@ export function Setup() {
     <div class="setup">
       <header class="appbar">
         <Brand />
-        <span class="appbar-right muted">Setup · step {step() + 1} of 4</span>
+        <span class="appbar-right muted">
+          Setup · step {step() + 1} of {STEPS.length}
+        </span>
       </header>
       <main class="setup-main">
         <ol class="stepper">
@@ -197,13 +206,11 @@ export function Setup() {
         <section class="setup-card">
           <Switch>
             <Match when={step() === 0}>
-              <span class="hero-mark">
-                <LogoIcon size={24} />
-              </span>
+              <Mascot size={72} class="hero-mascot" />
               <h1>Welcome to Claudine</h1>
               <p class="lede">
-                A small, fast editor built around Claude Code. Two quick choices
-                and you're ready to work.
+                A small, fast editor built around Claude Code. Pick a theme and
+                you're ready to work.
               </p>
               <div class="features">
                 <Feature
@@ -232,7 +239,7 @@ export function Setup() {
                 </button>
               </Footer>
             </Match>
-            <Match when={step() === 1}>
+            <Match when={step() === THEME}>
               <h1>Pick a theme</h1>
               <p class="lede">You can switch any time in Settings.</p>
               <div class="theme-options">
@@ -249,10 +256,10 @@ export function Setup() {
                 </button>
               </Footer>
             </Match>
-            <Match when={step() === 2}>
+            <Match when={step() === ACCOUNTS}>
               <AccountsStep onBack={back} onNext={next} />
             </Match>
-            <Match when={step() === 3}>
+            <Match when={step() === READY}>
               <span class="hero-mark success">
                 <CheckIcon size={24} />
               </span>
@@ -266,23 +273,25 @@ export function Setup() {
                   <dt>Theme</dt>
                   <dd>{state.settings.theme === "dark" ? "Dark" : "Light"}</dd>
                 </div>
-                <div>
-                  <dt>Accounts</dt>
-                  <dd class="summary-accounts">
-                    <For each={state.accounts}>
-                      {(account) => (
-                        <span class="summary-chip">
-                          <AccountBadge
-                            label={account.label}
-                            color={account.color}
-                            size="sm"
-                          />
-                          {account.label}
-                        </span>
-                      )}
-                    </For>
-                  </dd>
-                </div>
+                <Show when={PREVIEW_CLAUDE}>
+                  <div>
+                    <dt>Accounts</dt>
+                    <dd class="summary-accounts">
+                      <For each={state.accounts}>
+                        {(account) => (
+                          <span class="summary-chip">
+                            <AccountBadge
+                              label={account.label}
+                              color={account.color}
+                              size="sm"
+                            />
+                            {account.label}
+                          </span>
+                        )}
+                      </For>
+                    </dd>
+                  </div>
+                </Show>
               </dl>
               <Footer onBack={back}>
                 <button

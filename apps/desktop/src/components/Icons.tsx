@@ -136,3 +136,9 @@ export const SunIcon = (p: IconProps) => (
     <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
   </Svg>
 );
+export const FolderOpenIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 3h7a2 2 0 0 1 2 2v1" />
+    <path d="M3 19 5.5 11h16L19 19Z" />
+  </Svg>
+);

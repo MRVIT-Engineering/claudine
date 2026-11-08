@@ -1,7 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The only thing the UI may do is call app_version.",
+  "description": "The UI may read the open project and the user's settings through these commands, and nothing else.",
   "windows": ["main"],
-  "permissions": ["allow-app-version"]
+  "permissions": [
+    "allow-app-version",
+    "allow-open-project",
+    "allow-current-project",
+    "allow-list-dir",
+    "allow-read-file",
+    "allow-list-files",
+    "allow-get-settings",
+    "allow-set-settings"
+  ]
 }

@@ -15,6 +15,17 @@ Please don't open a public issue for a vulnerability.
 - Every new dependency is recorded in `DEPENDENCIES.md` with a reason.
 - Use the `rust-mentor` skill whenever writing or changing Rust.
 
+## Settings file
+
+- Settings live in `settings.json` in the user's app config folder. Rust picks that path; the webview can't choose it.
+- Rust checks every value before saving: numbers are clamped, and unknown values make the whole file invalid. Hidden names must be plain names, never paths.
+- A file that can't be read is moved to `settings.json.invalid` and defaults are used, so a bad file can't stop the app from starting.
+
+## Plugins
+
+- `tauri-plugin-dialog` is used only from Rust, for the folder picker. The webview has no `dialog:*` permission; a direct call from JavaScript fails with "not allowed by ACL". The plugin also replaces `window.alert` and `window.confirm` with its own commands, so those fail too. The app doesn't use them.
+- The plugin depends on `tauri-plugin-fs` but doesn't register it, so no `fs` commands exist in the app.
+
 ## Known limits of the path guard
 
 The path guard (`crates/core/src/path_guard.rs`) keeps file access inside the open project. It doesn't cover the following:

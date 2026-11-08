@@ -1,11 +1,13 @@
 import { For, Match, Show, Switch } from "solid-js";
 import { languageName } from "../lib/codemirror";
-import { BRANCH, FILES, PROJECT_PATH } from "../mock/data";
+import { PREVIEW_CLAUDE } from "../lib/flags";
 import {
   accountOf,
   conflictingFiles,
   cursor,
   navigate,
+  proposalFor,
+  saveStatus,
   setDialog,
   state,
   updateSettings,
@@ -14,21 +16,21 @@ import type { View } from "../types";
 import { openPalette } from "./CommandPalette";
 import { STATUS_WORD } from "./Common";
 import { findMatches } from "./FindPanel";
-import { CheckIcon, LogoIcon, SearchIcon } from "./Icons";
+import { CheckIcon, SearchIcon } from "./Icons";
+import { Mascot } from "./Mascot";
 
-const TABS: { view: View; label: string }[] = [
+const ALL_TABS: { view: View; label: string; preview?: boolean }[] = [
   { view: "editor", label: "Editor" },
-  { view: "parallel", label: "Parallel" },
-  { view: "accounts", label: "Accounts" },
+  { view: "parallel", label: "Parallel", preview: true },
+  { view: "accounts", label: "Accounts", preview: true },
   { view: "settings", label: "Settings" },
 ];
+const TABS = ALL_TABS.filter((tab) => PREVIEW_CLAUDE || !tab.preview);
 
 export function Brand() {
   return (
     <span class="brand">
-      <span class="brand-mark">
-        <LogoIcon size={16} />
-      </span>
+      <Mascot size={22} class="brand-mark" />
       Claudine
     </span>
   );
@@ -40,8 +42,8 @@ export function AppBar() {
   return (
     <header class="appbar">
       <Brand />
-      <Show when={workspaceView()}>
-        <span class="project-path">{PROJECT_PATH}</span>
+      <Show when={workspaceView() && state.project}>
+        {(project) => <span class="project-path">{project().name}</span>}
       </Show>
       <nav class="tabs" aria-label="Main">
         <For each={TABS}>
@@ -58,7 +60,7 @@ export function AppBar() {
           )}
         </For>
       </nav>
-      <Show when={workspaceView()}>
+      <Show when={workspaceView() && state.project}>
         <button type="button" class="goto-box" onClick={() => openPalette("")}>
           <SearchIcon size={13} />
           <span>Go to file…</span>
@@ -67,7 +69,7 @@ export function AppBar() {
       </Show>
       <div class="appbar-right">
         <Switch>
-          <Match when={state.view === "editor"}>
+          <Match when={state.view === "editor" && PREVIEW_CLAUDE}>
             <span class="live-pill">
               <span class="dot dot-running" />
               {state.sessions.length}{" "}
@@ -102,9 +104,21 @@ export function AppBar() {
             </button>
           </Match>
           <Match when={state.view === "settings"}>
-            <span class="saved-note">
-              <CheckIcon size={13} /> Changes save automatically
-            </span>
+            <Switch>
+              <Match when={saveStatus() === "error"}>
+                <span class="saved-note save-error">
+                  Couldn't save settings
+                </span>
+              </Match>
+              <Match when={saveStatus() === "saving"}>
+                <span class="saved-note">Saving…</span>
+              </Match>
+              <Match when={saveStatus() === "saved"}>
+                <span class="saved-note">
+                  <CheckIcon size={13} /> Changes save automatically
+                </span>
+              </Match>
+            </Switch>
           </Match>
         </Switch>
       </div>
@@ -115,20 +129,21 @@ export function AppBar() {
 export function StatusBar() {
   const conflictNote = () => {
     const files = conflictingFiles();
-    if (!state.settings.warnSameFile) return "Conflict warnings off";
+    if (!state.preview.warnSameFile) return "Conflict warnings off";
     if (files.length === 0)
       return "Conflicts: none · sessions touch separate files";
     return `Conflict: ${files.length} ${files.length === 1 ? "file" : "files"} edited by more than one session`;
   };
   return (
     <footer class="statusbar">
-      <span>{BRANCH}</span>
       <Show
         when={state.view === "editor"}
         fallback={<span>{conflictNote()}</span>}
       >
-        <span>{languageName(state.activeTab)}</span>
-        <Show when={FILES[state.activeTab]?.segments}>
+        <Show when={state.activeTab}>
+          <span>{languageName(state.activeTab)}</span>
+        </Show>
+        <Show when={proposalFor(state.activeTab)}>
           <button
             type="button"
             class="status-btn"
@@ -159,7 +174,10 @@ export function StatusBar() {
         )}
       </Show>
       <Show when={state.view === "editor" && cursor()}>
-        <span>Spaces: 4</span>
+        <span>
+          {state.settings.insertSpaces ? "Spaces" : "Tab size"}:{" "}
+          {state.settings.tabSize}
+        </span>
       </Show>
       <Show when={state.view === "editor" && state.dirty[state.activeTab]}>
         <span class="status-unsaved">

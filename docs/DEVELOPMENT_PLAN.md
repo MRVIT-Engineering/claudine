@@ -2,7 +2,7 @@
 
 How Claudine goes from a mock UI to a real, usable editor.
 
-**Status:** Milestones 0 to 6 are the first goal. Milestone 1 (path guard) is done. Next: Milestone 0, then Milestone 2.
+**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. Next: Milestone 5, saving.
 
 ## The first goal: a usable editor
 
@@ -86,7 +86,7 @@ Every test in Milestone 1 maps to one of these:
 
 Each milestone ends with something you can run. Sizes are relative: S, M or L.
 
-### Milestone 0: Prepare the UI (S, Claude)
+### Milestone 0: Prepare the UI (done)
 
 - Add `src/backend/`, a typed interface with one function per command and a mock implementation, so `store.ts` stops reading `mock/data.ts` directly. Browser preview keeps working on the mock.
 - Label the mock screens. Chat, Parallel and Accounts get a visible "Preview: not connected yet" marker, so demo data can't be mistaken for real activity once real files appear.
@@ -111,7 +111,7 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 - `write_path` returns `NeedsConfirmation` for `.claude/` and `.mcp.json`. The native confirmation, and a way to continue after it, comes in Milestone 5.
 - `GuardError` isn't `Serialize` yet. Milestone 2's command error type wraps it.
 
-### Milestone 2: Open a folder (M, you)
+### Milestone 2: Open a folder (done, written by Claude in explain mode)
 
 - Add `tauri-plugin-dialog` and call its folder picker from Rust, without granting the webview any `dialog:*` permission. Prove that with a negative test: calling the dialog from JS must fail. The plugin's docs show `pick_file`, so confirm the folder API when you add it.
 - Add `ProjectState`, held with `.manage()` and read through `tauri::State`.
@@ -123,7 +123,7 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 
 **Exercise idea:** a small pure function such as `project_name(path) -> String`.
 
-### Milestone 3: Show the file tree (M, you)
+### Milestone 3: Show the file tree (done, written by Claude in explain mode)
 
 - Write `list_dir`: folders first, then alphabetical, case-insensitive.
 - Hide `.git`, `node_modules`, `target` and `.DS_Store`. A fixed list is enough for now.
@@ -136,7 +136,7 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 
 **Exercise idea:** the sort comparison function.
 
-### Milestone 4: Open and show files (M, you)
+### Milestone 4: Open and show files (done, written by Claude in explain mode)
 
 - Write `read_file` with a size limit. Start at 5 MB and tune it later.
 - Return `NotText` for invalid UTF-8 or NUL bytes, so the UI can show "can't display this file" instead of garbage.
@@ -148,6 +148,14 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 **Rust you'll meet:** `std::fs`, `Result` chains, `String::from_utf8`, enums with data.
 
 **Exercise idea:** `looks_like_text(bytes: &[u8]) -> bool`.
+
+**What changed from the plan in Milestones 0 to 4:**
+
+- **Who wrote it:** Claude wrote this Rust in explain mode, at your request, instead of you.
+- **Preview screens:** hidden behind `PREVIEW_CLAUDE` instead of labelled.
+- **No version yet:** `read_file` returns text only. The version for conflict checks arrives with saving in Milestone 5.
+- **Extra command:** `list_files`, which lists every file for Go to file and project search. It's capped at 20,000 files and doesn't follow symlinked folders.
+- **Not remembered on restart:** the open folder isn't remembered when the app restarts. That's recent projects, in Milestone 7.
 
 ### Milestone 5: Edit and save (L, you) - the riskiest milestone
 
@@ -169,6 +177,13 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 - In the UI, add new file and new folder buttons, inline naming in the tree, and a right-click menu. Update open tabs when a file is renamed or deleted, and keep unsaved edits if a file disappears.
 
 **Done when:** all the file operations work from the tree, and you could do a day's editing in Claudine without touching another editor. **This completes the first goal.**
+
+### Settings (done, outside the milestones)
+
+- Rust stores settings per user in `settings.json`, in the app config folder.
+- Settings in the browser from earlier versions are imported once.
+- Every option on the Settings page is live.
+- Sidebar widths are settings too. The hidden-name list replaces the fixed list in `files.rs`.
 
 ### Milestone 7: Daily-driver polish (M, optional for the goal)
 

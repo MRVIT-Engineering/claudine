@@ -7,7 +7,7 @@ import {
   removeAccount,
   state,
   updateAccount,
-  updateSettings,
+  updatePreview,
 } from "../state/store";
 import type { Account } from "../types";
 
@@ -135,8 +135,8 @@ export function SessionDefaults() {
         <span class="field-label">Start new sessions on</span>
         <select
           class="input"
-          value={state.settings.startOn}
-          onChange={(e) => updateSettings({ startOn: e.currentTarget.value })}
+          value={state.preview.startOn}
+          onChange={(e) => updatePreview({ startOn: e.currentTarget.value })}
         >
           <option value="least-busy">Least busy account</option>
           <For each={state.accounts}>
@@ -147,9 +147,9 @@ export function SessionDefaults() {
       <label class="check">
         <input
           type="checkbox"
-          checked={state.settings.warnSameFile}
+          checked={state.preview.warnSameFile}
           onChange={(e) =>
-            updateSettings({ warnSameFile: e.currentTarget.checked })
+            updatePreview({ warnSameFile: e.currentTarget.checked })
           }
         />
         Warn when two sessions edit the same file
@@ -157,9 +157,9 @@ export function SessionDefaults() {
       <label class="check">
         <input
           type="checkbox"
-          checked={state.settings.worktreePerSession}
+          checked={state.preview.worktreePerSession}
           onChange={(e) =>
-            updateSettings({ worktreePerSession: e.currentTarget.checked })
+            updatePreview({ worktreePerSession: e.currentTarget.checked })
           }
         />
         Give each session its own git worktree

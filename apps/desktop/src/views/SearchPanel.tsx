@@ -1,8 +1,7 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { ChevronDown, ChevronRight, FileIcon } from "../components/Icons";
 import { type SearchResults, searchProject } from "../lib/projectSearch";
-import { FILES } from "../mock/data";
-import { revealMatch, searchTexts } from "../state/store";
+import { fileName, loadSearchTexts, revealMatch, state } from "../state/store";
 
 const [focusRequest, setFocusRequest] = createSignal<{ text: string } | null>(
   null,
@@ -40,6 +39,10 @@ export function SearchPanel() {
   const [collapsed, setCollapsed] = createSignal<string[]>([]);
   let timer: number | undefined;
 
+  const [searching, setSearching] = createSignal(false);
+  const [skipped, setSkipped] = createSignal(0);
+  let run = 0;
+
   // Waits for a pause in typing, like VS Code, so each keystroke doesn't rescan.
   createEffect(() => {
     const options = {
@@ -48,10 +51,23 @@ export function SearchPanel() {
       wholeWord: wholeWord(),
       regexp: regexp(),
     };
+    state.project;
     window.clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      setResults(searchProject(searchTexts(), options));
-    }, 120);
+    if (!options.text) {
+      setResults(EMPTY);
+      return;
+    }
+    timer = window.setTimeout(async () => {
+      const mine = ++run;
+      setSearching(true);
+      const loaded = await loadSearchTexts();
+      // A newer search started while this one was reading files.
+      if (mine !== run) return;
+      const found = searchProject(loaded.texts, options);
+      setResults({ ...found, truncated: found.truncated || loaded.truncated });
+      setSkipped(loaded.skipped);
+      setSearching(false);
+    }, 150);
   });
   onCleanup(() => window.clearTimeout(timer));
 
@@ -69,8 +85,10 @@ export function SearchPanel() {
 
   const summary = () => {
     const r = results();
+    if (!state.project) return "Open a folder to search it.";
     if (r.error) return r.error;
     if (!text()) return "";
+    if (searching()) return "Searching…";
     if (r.total === 0) return "No results";
     const files = r.files.length;
     return `${r.total}${r.truncated ? "+" : ""} ${r.total === 1 ? "result" : "results"} in ${files} ${files === 1 ? "file" : "files"}`;
@@ -133,10 +151,16 @@ export function SearchPanel() {
       <p class="search-summary" classList={{ error: !!results().error }}>
         {summary()}
       </p>
+      <Show when={text() && skipped() > 0 && !searching()}>
+        <p class="search-summary">
+          Skipped {skipped()} binary or oversized{" "}
+          {skipped() === 1 ? "file" : "files"}.
+        </p>
+      </Show>
       <div class="search-results">
         <For each={results().files}>
           {(file) => {
-            const name = () => FILES[file.path]?.name ?? file.path;
+            const name = () => fileName(file.path);
             const dir = () => file.path.split("/").slice(0, -1).join("/");
             const open = () => !collapsed().includes(file.path);
             return (

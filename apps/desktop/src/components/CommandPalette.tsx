@@ -17,12 +17,14 @@ import {
   Show,
 } from "solid-js";
 import { activeEditor } from "../lib/activeEditor";
-import { FILES } from "../mock/data";
+import { PREVIEW_CLAUDE } from "../lib/flags";
 import {
   accountOf,
   letterOf,
   navigate,
   openFile,
+  openProjectFolder,
+  refreshFileList,
   setDialog,
   showSidebar,
   state,
@@ -46,6 +48,7 @@ export function openPalette(prefix: string) {
 
 interface Item {
   label: JSX.Element;
+  title?: string;
   detail?: JSX.Element;
   keys?: string;
   isOpen?: boolean;
@@ -82,6 +85,11 @@ function searchAllFiles() {
 }
 
 const COMMANDS: Command[] = [
+  {
+    label: "Open Folder…",
+    keys: `${MOD}O`,
+    run: () => void openProjectFolder(),
+  },
   { label: "Go to File…", keys: `${MOD}${SHIFT}O`, run: () => openPalette("") },
   {
     label: "Search in All Files",
@@ -167,7 +175,9 @@ const COMMANDS: Command[] = [
       }),
   },
   { label: "Open Settings", run: () => navigate("settings") },
-  { label: "New Session", run: () => setDialog("new-session") },
+  ...(PREVIEW_CLAUDE
+    ? [{ label: "New Session", run: () => setDialog("new-session") }]
+    : []),
 ];
 
 interface Match {
@@ -242,7 +252,7 @@ function goToLine(view: EditorView, line: number) {
 
 /** Like `ranked`, but matches in the file name count more than matches in its folder. */
 function rankedFiles(query: string): { item: string; hits: number[] }[] {
-  const paths = Object.keys(FILES);
+  const paths = state.fileList?.paths ?? [];
   if (!query) return paths.map((item) => ({ item, hits: [] }));
   return paths
     .flatMap((path) => {
@@ -264,6 +274,7 @@ function fileItems(query: string): Item[] {
     const account = session ? accountOf(session.accountId) : undefined;
     return {
       label: <Highlighted text={name} hits={hits} offset={slash + 1} />,
+      title: path,
       detail: dir ? <Highlighted text={dir} hits={hits} /> : undefined,
       isOpen: state.openTabs.includes(path),
       badge: account
@@ -349,6 +360,8 @@ function Palette(props: { initial: string; onClose: () => void }) {
   };
 
   onMount(() => {
+    // Picks up files created since the list was last read.
+    if (mode() === "files") void refreshFileList();
     dialog.showModal();
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
@@ -364,7 +377,8 @@ function Palette(props: { initial: string; onClose: () => void }) {
     const count = items().length;
     if (mode() === "line") return "";
     const noun = mode() === "commands" ? "command" : "file";
-    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+    const more = mode() === "files" && state.fileList?.truncated ? "+" : "";
+    return `${count}${more} ${noun}${count === 1 ? "" : "s"}`;
   };
 
   return (
@@ -397,6 +411,7 @@ function Palette(props: { initial: string; onClose: () => void }) {
               <button
                 type="button"
                 class="palette-item"
+                title={item.title}
                 classList={{ selected: index() === selected() }}
                 aria-current={index() === selected() ? "true" : undefined}
                 onMouseMove={() => setSelected(index())}
@@ -430,7 +445,11 @@ function Palette(props: { initial: string; onClose: () => void }) {
           )}
         </For>
         <Show when={items().length === 0}>
-          <li class="palette-empty">No matches</li>
+          <li class="palette-empty">
+            {mode() === "files" && !state.project
+              ? "Open a folder first (⌘O)"
+              : "No matches"}
+          </li>
         </Show>
       </ul>
       <footer class="palette-footer">
@@ -462,13 +481,16 @@ function inEditor(event: KeyboardEvent): boolean {
 /** App-wide shortcuts, and the palette they open. */
 export function CommandPalette() {
   const onKey = (event: KeyboardEvent) => {
-    if (!state.setupDone) return;
+    if (!state.settings.setupDone) return;
     const mod = IS_MAC ? event.metaKey : event.ctrlKey;
     const key = event.key.toLowerCase();
     const plain = mod && !event.altKey;
     let run: (() => void) | null = null;
 
-    if (plain && event.shiftKey && key === "o") run = () => openPalette("");
+    if (plain && !event.shiftKey && key === "o") {
+      run = () => void openProjectFolder();
+    } else if (plain && event.shiftKey && key === "o")
+      run = () => openPalette("");
     else if (plain && !event.shiftKey && key === "p")
       run = () => openPalette("");
     else if (plain && event.shiftKey && key === "p")

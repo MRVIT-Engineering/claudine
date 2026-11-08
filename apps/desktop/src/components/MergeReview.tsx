@@ -15,6 +15,7 @@ import {
 import {
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   For,
   type JSX,
@@ -24,7 +25,7 @@ import {
 import { setReviewEditor } from "../lib/activeEditor";
 import {
   createEditorRoot,
-  languageFor,
+  loadLanguage,
   sharedExtensions,
 } from "../lib/codemirror";
 import { reveal, setReveal } from "../state/store";
@@ -188,10 +189,10 @@ function sideExtension(
   ];
 }
 
-function readOnlyExtensions(path: string, wrap: boolean): Extension {
+function readOnlyExtensions(language: Extension, wrap: boolean): Extension {
   return [
     sharedExtensions,
-    languageFor(path),
+    language,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
     EditorView.editorAttributes.of({ class: "cm-review" }),
@@ -215,6 +216,7 @@ export function MergeReview(props: {
   let destroy: (() => void) | undefined;
   let frame = 0;
   let measureBars = () => {};
+  const [loadedLanguage] = createResource(() => props.path, loadLanguage);
   const plan = createMemo(() => buildPlan(props.segments, props.decisionOf));
   const [tops, setTops] = createSignal<number[]>([]);
   // The Original side, where project search results are shown.
@@ -225,7 +227,9 @@ export function MergeReview(props: {
 
     createEffect(() => {
       const current = plan();
-      const { layout, wrap, path } = props;
+      const { layout, wrap } = props;
+      // Builds again once the language arrives, which adds the colors.
+      const language = loadedLanguage() ?? [];
       destroy?.();
       if (!root) return;
 
@@ -248,7 +252,7 @@ export function MergeReview(props: {
       const remeasure = EditorView.updateListener.of((update) => {
         if (update.geometryChanged || update.viewportChanged) measure();
       });
-      const shared = [readOnlyExtensions(path, wrap), remeasure];
+      const shared = [readOnlyExtensions(language, wrap), remeasure];
       const aLines = current.hunks.map((h) => h.aLine);
       const bLines = current.hunks.map((h) => h.bLine);
 

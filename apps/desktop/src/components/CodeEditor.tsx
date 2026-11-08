@@ -6,18 +6,22 @@ import {
 } from "@codemirror/commands";
 import {
   bracketMatching,
+  foldGutter,
   indentOnInput,
   indentUnit,
 } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
   highlightActiveLine,
   highlightActiveLineGutter,
+  highlightTrailingWhitespace,
+  highlightWhitespace,
   keymap,
   lineNumbers,
+  scrollPastEnd,
 } from "@codemirror/view";
 import { createEffect, onCleanup, onMount } from "solid-js";
 import { setActiveEditor } from "../lib/activeEditor";
@@ -25,6 +29,7 @@ import { buffers } from "../lib/buffers";
 import {
   createEditorRoot,
   languageFor,
+  loadLanguage,
   sharedExtensions,
 } from "../lib/codemirror";
 import {
@@ -42,9 +47,31 @@ import {
   setReveal,
 } from "../state/store";
 
-const wrapping = new Compartment();
+import type { Settings } from "../types";
+
+const preferences = new Compartment();
+const language = new Compartment();
 const assist = new Compartment();
-const wrapExtension = (wrap: boolean) => (wrap ? EditorView.lineWrapping : []);
+
+/** Everything in Settings → Editor that changes how the editor behaves. */
+function preferenceExtensions(s: Settings): Extension {
+  return [
+    s.lineNumbers ? lineNumbers() : [],
+    s.foldGutter ? foldGutter({ openText: "⌄", closedText: "›" }) : [],
+    s.highlightActiveLine
+      ? [highlightActiveLine(), highlightActiveLineGutter()]
+      : [],
+    s.bracketMatching ? bracketMatching() : [],
+    s.whitespace === "all" ? highlightWhitespace() : [],
+    s.whitespace === "trailing" ? highlightTrailingWhitespace() : [],
+    s.scrollPastEnd ? scrollPastEnd() : [],
+    s.wrapLines ? EditorView.lineWrapping : [],
+    // A blink rate of 0 keeps the cursor solid.
+    drawSelection({ cursorBlinkRate: s.cursorBlinking ? 1200 : 0 }),
+    EditorState.tabSize.of(s.tabSize),
+    indentUnit.of(s.insertSpaces ? " ".repeat(s.tabSize) : "\t"),
+  ];
+}
 const assistFor = (path: string) =>
   assistExtensions(
     {
@@ -71,20 +98,13 @@ function createState(path: string, text: string) {
     doc: text,
     extensions: [
       sharedExtensions,
-      languageFor(path),
-      lineNumbers(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
-      drawSelection(),
+      language.of(languageFor(path)),
+      preferences.of(preferenceExtensions(appState.settings)),
       history(),
       indentOnInput(),
-      bracketMatching(),
       editingExtensions,
-      indentUnit.of("    "),
-      EditorState.tabSize.of(4),
       assist.of(assistFor(path)),
       highlightSelectionMatches(),
-      wrapping.of(wrapExtension(appState.settings.wrapLines)),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -125,6 +145,11 @@ export function CodeEditor(props: { path: string; text: string }) {
     view = editor;
     setActiveEditor(editor);
     setCursor(cursorInfo(editor.state));
+    void loadLanguage(props.path).then((extension) => {
+      if (view === editor) {
+        editor.dispatch({ effects: language.reconfigure(extension) });
+      }
+    });
   });
 
   createEffect(() => {
@@ -145,8 +170,8 @@ export function CodeEditor(props: { path: string; text: string }) {
   });
 
   createEffect(() => {
-    const wrap = appState.settings.wrapLines;
-    view?.dispatch({ effects: wrapping.reconfigure(wrapExtension(wrap)) });
+    const extensions = preferenceExtensions(appState.settings);
+    view?.dispatch({ effects: preferences.reconfigure(extensions) });
   });
 
   createEffect(() => {
@@ -163,6 +188,7 @@ export function CodeEditor(props: { path: string; text: string }) {
       });
       setActiveEditor((current) => (current === view ? null : current));
       view.destroy();
+      view = undefined;
     }
     setCursor(null);
   });
