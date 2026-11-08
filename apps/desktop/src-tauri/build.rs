@@ -13,6 +13,12 @@ fn main() {
         "list_files",
         "get_settings",
         "set_settings",
+        "claude_status",
+        "start_session",
+        "send_message",
+        "answer_permission",
+        "interrupt_session",
+        "stop_session",
     ]);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);
     tauri_build::try_build(attributes).expect("tauri-build failed");

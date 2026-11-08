@@ -188,10 +188,16 @@ pub fn load(path: &Path) -> (Settings, bool) {
 /// Writes the settings to a temp file, then renames it into place. A rename is atomic,
 /// so a crash leaves either the old file or the new one, never half of one.
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
+    let text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
+    write_atomic(path, &text)
+}
+
+/// Writes `text` to a temp file next to `path`, then renames it into place. Only for the
+/// app's own files in its config folder, never project files.
+pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder)?;
     }
-    let text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, text)?;
     fs::rename(&temp, path)

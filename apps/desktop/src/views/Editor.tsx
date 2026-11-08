@@ -31,6 +31,7 @@ import { Mascot } from "../components/Mascot";
 import { MergeReview } from "../components/MergeReview";
 import { Resizer } from "../components/Resizer";
 import { PREVIEW_CLAUDE } from "../lib/flags";
+import { claude, toggleClaudePanel } from "../state/claude";
 import {
   accountOf,
   activeSession,
@@ -64,6 +65,7 @@ import {
   WIDTHS,
 } from "../state/store";
 import type { Session, SourceFile, TranscriptItem } from "../types";
+import { ClaudePanel } from "./ClaudePanel";
 import { focusProjectSearch, SearchPanel } from "./SearchPanel";
 
 function sessionForFile(path: string): Session | undefined {
@@ -396,6 +398,19 @@ function ActivityBar() {
       >
         <SearchIcon size={17} />
       </button>
+      <Show when={!PREVIEW_CLAUDE}>
+        <button
+          type="button"
+          class="activity-btn"
+          classList={{ active: claude.open }}
+          title="Claude"
+          aria-label="Claude"
+          aria-pressed={claude.open}
+          onClick={toggleClaudePanel}
+        >
+          <Mascot size={18} />
+        </button>
+      </Show>
       <span class="spacer" />
       <button
         type="button"
@@ -911,7 +926,10 @@ function PermissionCardFor(props: { session: Session; command: string }) {
 
 export function Editor() {
   return (
-    <div class="editor-layout" classList={{ "no-chat": !PREVIEW_CLAUDE }}>
+    <div
+      class="editor-layout"
+      classList={{ "no-chat": !PREVIEW_CLAUDE && !claude.open }}
+    >
       <ActivityBar />
       <div class="sidebar-slot">
         <Show when={state.sidebar === "search"} fallback={<Explorer />}>
@@ -954,9 +972,11 @@ export function Editor() {
           </Show>
         </Show>
       </main>
-      <Show when={PREVIEW_CLAUDE}>
+      <Show when={PREVIEW_CLAUDE || claude.open}>
         <div class="sidebar-slot">
-          <ChatPanel />
+          <Show when={PREVIEW_CLAUDE} fallback={<ClaudePanel />}>
+            <ChatPanel />
+          </Show>
           <Resizer
             label="Resize chat"
             edge="left"

@@ -42,6 +42,9 @@ Mode: explain
 | Methods taking `self` by value | introduced | apps/desktop/src-tauri/src/settings.rs | `sanitized(mut self)`: the unchecked value can't be used afterwards |
 | `Clone` and `.clone()` | introduced | apps/desktop/src-tauri/src/settings.rs | Explicit copies, needed to return data from behind a lock |
 | Slices (`&[String]`) | introduced | apps/desktop/src-tauri/src/files.rs | Borrow any run of elements without copying |
+| `std::process::Command` and pipes | introduced | apps/desktop/src-tauri/src/claude.rs | Like `child_process.spawn`; `take()` moves each pipe out of the `Child` |
+| `serde_json::Value` and `json!` | introduced | apps/desktop/src-tauri/src/claude.rs | Untyped JSON; a missing key indexes to `Null` instead of panicking |
+| `HashMap` | introduced | apps/desktop/src-tauri/src/claude.rs | One key type and one value type; `remove` returns the value, which makes "answer once" easy |
 | `Box<dyn Error>` | introduced | apps/desktop/src-tauri/src/main.rs | Any error type behind a pointer, so `?` works in `setup` |
 
 ## Exercises
@@ -55,3 +58,4 @@ Mode: explain
 - **2026-11-05, path guard (explain mode):** Claude wrote `crates/core/src/path_guard.rs` with `cap-std`. Introduced 10 concepts across 5 changes. The user's line-by-line review is still open. No exercises: security-critical code.
 - **2026-11-05, open and browse a folder (explain mode):** Claude wrote the project commands in `apps/desktop/src-tauri` at the user's request. Introduced 10 concepts. One test expectation was wrong, not the code. Still owed: explaining the `'_` lifetime in `State<'_, T>`.
 - **2026-11-06, settings stored by Rust (explain mode):** Claude wrote `settings.rs` and wired the hidden names into `files.rs`. Introduced 5 concepts across 3 changes. No compiler errors. Still owed: the `'_` lifetime.
+- **2026-11-08, Claude sessions (explain mode):** Claude wrote `claude.rs` and `trust.rs`: running the user's `claude` with stream-json, Rust-side permission answers, and a per-folder trust prompt. Introduced 3 concepts; reused threads, `Arc`, `Mutex` and `Drop`. Clippy and the compiler passed first time. Tests include a fake `claude` shell script. Still owed: the `'_` lifetime.

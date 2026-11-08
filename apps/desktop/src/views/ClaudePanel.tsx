@@ -1,0 +1,323 @@
+import {
+  createEffect,
+  createSignal,
+  For,
+  Match,
+  onMount,
+  Show,
+  Switch,
+} from "solid-js";
+import { Empty } from "../components/Common";
+import { ArrowUp, CloseIcon } from "../components/Icons";
+import { Mascot } from "../components/Mascot";
+import {
+  answerPermission,
+  type ChatEntry,
+  checkClaudeInstalled,
+  claude,
+  interruptClaude,
+  type PermissionRequest,
+  sendToClaude,
+  startClaude,
+  stopClaude,
+  toggleClaudePanel,
+} from "../state/claude";
+import { openFile, state } from "../state/store";
+
+/** Text with `code` spans. Rendered as text nodes, never as HTML. */
+function Prose(props: { text: string }) {
+  return (
+    <p class="chat-text claude-prose">
+      {props.text
+        .split("`")
+        .map((part, i) => (i % 2 === 1 ? <code>{part}</code> : part))}
+    </p>
+  );
+}
+
+const FILE_TOOLS = ["Read", "Write", "Edit", "NotebookEdit"];
+
+function ToolEntry(props: { entry: Extract<ChatEntry, { kind: "tool" }> }) {
+  const [expanded, setExpanded] = createSignal(false);
+  const state = () => {
+    const result = props.entry.result;
+    if (!result) return "running";
+    return result.isError ? "error" : "done";
+  };
+  const canOpen = () =>
+    FILE_TOOLS.includes(props.entry.name) &&
+    !props.entry.outside &&
+    state() === "done";
+  return (
+    <div class="claude-tool" classList={{ [`is-${state()}`]: true }}>
+      <button
+        type="button"
+        class="claude-tool-head"
+        aria-expanded={expanded()}
+        disabled={!props.entry.result?.text}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        <span class="dot" />
+        <strong>{props.entry.name}</strong>
+        <code class="truncate" title={props.entry.summary}>
+          {props.entry.summary}
+        </code>
+        <Show when={props.entry.outside}>
+          <span class="claude-outside">outside project</span>
+        </Show>
+      </button>
+      <Show when={canOpen()}>
+        <button
+          type="button"
+          class="claude-tool-open"
+          onClick={() => openFile(props.entry.summary)}
+        >
+          Open
+        </button>
+      </Show>
+      <Show when={expanded() && props.entry.result}>
+        {(result) => <pre class="claude-tool-result">{result().text}</pre>}
+      </Show>
+    </div>
+  );
+}
+
+function Entry(props: { entry: ChatEntry }) {
+  // Entries are only appended, and a tool's `result` is read reactively inside ToolEntry.
+  const entry = props.entry;
+  switch (entry.kind) {
+    case "user":
+      return <div class="chat-user claude-prose">{entry.text}</div>;
+    case "text":
+      return <Prose text={entry.text} />;
+    case "tool":
+      return <ToolEntry entry={entry} />;
+    case "notice":
+      return <div class={`claude-notice tone-${entry.tone}`}>{entry.text}</div>;
+  }
+}
+
+function PermissionPrompt(props: { request: PermissionRequest }) {
+  return (
+    <div
+      class="permission claude-permission"
+      role="alertdialog"
+      aria-label="Permission requested"
+    >
+      <strong>Claude wants to use {props.request.tool}</strong>
+      <Show when={props.request.summary}>
+        <code class="claude-permission-target">{props.request.summary}</code>
+      </Show>
+      <Show when={props.request.outside}>
+        <span class="claude-warning">This is outside the open folder.</span>
+      </Show>
+      <Show when={props.request.detail}>
+        <pre class="claude-permission-detail">{props.request.detail}</pre>
+      </Show>
+      <div class="row">
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => void answerPermission(props.request.id, false)}
+        >
+          Deny
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-accent"
+          onClick={() => void answerPermission(props.request.id, true)}
+        >
+          Allow
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Composer() {
+  const [text, setText] = createSignal("");
+  let input!: HTMLTextAreaElement;
+  const working = () => claude.status === "working";
+
+  const submit = async () => {
+    const message = text();
+    if (!message.trim()) return;
+    if (await sendToClaude(message)) setText("");
+  };
+
+  onMount(() => input.focus());
+
+  return (
+    <form
+      class="composer"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
+      <textarea
+        ref={input}
+        aria-label="Message Claude"
+        placeholder={working() ? "Queue another message…" : "Ask Claude…"}
+        rows="2"
+        value={text()}
+        onInput={(e) => setText(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            void submit();
+          } else if (e.key === "Escape" && working()) {
+            e.preventDefault();
+            void interruptClaude();
+          }
+        }}
+      />
+      <div class="composer-row">
+        <Show when={working()}>
+          <button
+            type="button"
+            class="composer-btn"
+            title="Stop this turn (Esc)"
+            onClick={() => void interruptClaude()}
+          >
+            Stop
+          </button>
+        </Show>
+        <span class="spacer" />
+        <button
+          type="submit"
+          class="send-btn"
+          aria-label="Send"
+          disabled={!text().trim()}
+        >
+          <ArrowUp />
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function statusLabel(): string {
+  switch (claude.status) {
+    case "starting":
+      return "Starting…";
+    case "working":
+      return "Working…";
+    case "idle":
+      return "Ready";
+    case "ended":
+      return "Ended";
+    case "off":
+      return "";
+  }
+}
+
+function StartScreen() {
+  return (
+    <Switch>
+      <Match when={!state.project}>
+        <Empty title="No folder open">
+          Open a folder to start Claude Code in it.
+        </Empty>
+      </Match>
+      <Match when={claude.found === false}>
+        <Empty title="Claude Code isn't installed">
+          Claudine uses your own Claude Code install and never downloads it.
+          Install Claude Code, sign in once in a terminal, then try again.
+          <button
+            type="button"
+            class="btn btn-sm"
+            onClick={() => void checkClaudeInstalled()}
+          >
+            Check again
+          </button>
+        </Empty>
+      </Match>
+      <Match when={true}>
+        <div class="claude-start">
+          <Mascot size={44} />
+          <p>
+            Claude Code runs in <strong>{state.project?.name}</strong> with your
+            own login and settings. You approve each edit and command here.
+          </p>
+          <button
+            type="button"
+            class="btn btn-accent"
+            disabled={claude.status === "starting"}
+            onClick={() => void startClaude()}
+          >
+            {claude.status === "ended" ? "Start a new session" : "Start Claude"}
+          </button>
+        </div>
+      </Match>
+    </Switch>
+  );
+}
+
+export function ClaudePanel() {
+  let scroller: HTMLDivElement | undefined;
+  const live = () => claude.status === "idle" || claude.status === "working";
+
+  onMount(() => {
+    if (claude.found === null) void checkClaudeInstalled();
+  });
+
+  createEffect(() => {
+    claude.entries.length;
+    claude.permissions.length;
+    queueMicrotask(() => {
+      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    });
+  });
+
+  return (
+    <aside class="chat claude-panel" aria-label="Claude">
+      <div class="chat-tabs claude-head">
+        <Mascot size={16} />
+        <strong>Claude</strong>
+        <Show when={claude.model}>
+          <span class="muted truncate">{claude.model}</span>
+        </Show>
+        <span class="spacer" />
+        <Show when={statusLabel()}>
+          <span
+            class="claude-status"
+            classList={{ "is-working": claude.status === "working" }}
+          >
+            {statusLabel()}
+          </span>
+        </Show>
+        <Show when={live()}>
+          <button
+            type="button"
+            class="composer-btn"
+            title="End this session and stop Claude Code"
+            onClick={() => void stopClaude()}
+          >
+            End
+          </button>
+        </Show>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="Hide Claude panel"
+          onClick={toggleClaudePanel}
+        >
+          <CloseIcon />
+        </button>
+      </div>
+      <div class="chat-scroll" ref={scroller}>
+        <For each={claude.entries}>{(entry) => <Entry entry={entry} />}</For>
+        <For each={claude.permissions}>
+          {(request) => <PermissionPrompt request={request} />}
+        </For>
+        <Show when={!live()}>
+          <StartScreen />
+        </Show>
+      </div>
+      <Show when={live()}>
+        <Composer />
+      </Show>
+    </aside>
+  );
+}

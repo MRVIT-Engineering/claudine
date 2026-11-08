@@ -26,6 +26,7 @@ import type {
   TranscriptItem,
   View,
 } from "../types";
+import { resetClaude } from "./claude";
 
 export const ACCOUNT_COLORS: AccountColor[] = [
   "blue",
@@ -712,7 +713,26 @@ function reloadTree() {
   void refreshFileList();
 }
 
+/**
+ * Re-reads what Claude may have changed: the tree, and open files without unsaved edits.
+ * `paths` limits it to those files; `"all"` is for commands, which can touch anything.
+ */
+export function filesChangedOnDisk(paths: string[] | "all") {
+  if (!state.project) return;
+  searchCache.clear();
+  void loadDir("");
+  for (const path of state.expanded) void loadDir(path);
+  void refreshFileList();
+  for (const path of state.openTabs) {
+    if (state.dirty[path] || !state.files[path]) continue;
+    if (paths !== "all" && !paths.includes(path)) continue;
+    buffers.delete(path);
+    void loadFile(path);
+  }
+}
+
 function projectOpened(project: ProjectInfo) {
+  resetClaude();
   buffers.clear();
   searchCache.clear();
   setState(

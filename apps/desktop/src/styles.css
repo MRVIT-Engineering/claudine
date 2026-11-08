@@ -2681,3 +2681,115 @@ body.resizing {
 .settings-nav {
   min-width: 0;
 }
+
+/* Claude panel: the real session */
+.claude-head {
+  gap: 7px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+}
+.claude-head .muted {
+  font-size: 11.5px;
+}
+.claude-status {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.claude-status.is-working {
+  color: var(--green);
+}
+.claude-prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.claude-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+.claude-tool-head {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+.claude-tool-head:disabled {
+  cursor: default;
+}
+.claude-tool-head code {
+  color: var(--text-2);
+}
+.claude-tool .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.claude-tool.is-running .dot {
+  background: var(--green);
+}
+.claude-tool.is-done .dot {
+  background: var(--accent);
+}
+.claude-tool.is-error .dot {
+  background: var(--red);
+}
+.claude-tool-open {
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.claude-tool-open:hover {
+  text-decoration: underline;
+}
+.claude-tool-result,
+.claude-permission-detail {
+  flex-basis: 100%;
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.claude-outside {
+  flex: none;
+  font-size: 11px;
+  color: var(--amber);
+}
+.claude-permission-target {
+  overflow-wrap: anywhere;
+}
+.claude-warning {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.claude-notice {
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.claude-notice.tone-error {
+  color: var(--red);
+}
+.claude-start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: auto 0;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-2);
+  line-height: 1.55;
+}
