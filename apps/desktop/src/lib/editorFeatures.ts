@@ -12,7 +12,7 @@ import {
   snippetCompletion,
 } from "@codemirror/autocomplete";
 import { selectLine } from "@codemirror/commands";
-import { codeFolding, foldGutter, foldKeymap } from "@codemirror/language";
+import { codeFolding, foldKeymap } from "@codemirror/language";
 import { search } from "@codemirror/search";
 import { EditorState, type Extension, Prec } from "@codemirror/state";
 import {
@@ -190,7 +190,6 @@ export const editingExtensions: Extension = [
   highlightSpecialChars(),
   dropCursor(),
   codeFolding({ placeholderText: "⋯" }),
-  foldGutter({ openText: "⌄", closedText: "›" }),
   search({ top: true, createPanel: createFindPanel }),
   // Ahead of CodeMirror's own Cmd+F binding in `searchKeymap`.
   Prec.high(keymap.of([{ key: "Mod-f", run: openFind, preventDefault: true }])),

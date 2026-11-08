@@ -1,5 +1,6 @@
-import { rust, rustLanguage } from "@codemirror/lang-rust";
-import { syntaxHighlighting } from "@codemirror/language";
+import { rustLanguage } from "@codemirror/lang-rust";
+import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
+import { languages } from "@codemirror/language-data";
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { highlightCode, tagHighlighter, tags } from "@lezer/highlight";
@@ -28,6 +29,18 @@ const tokenHighlighter = tagHighlighter([
     class: "tk-call",
   },
   { tag: tags.number, class: "tk-number" },
+  {
+    tag: [tags.regexp, tags.escape, tags.special(tags.string)],
+    class: "tk-string",
+  },
+  { tag: tags.tagName, class: "tk-tag" },
+  { tag: tags.attributeName, class: "tk-property" },
+  { tag: tags.heading, class: "tk-heading" },
+  { tag: tags.strong, class: "tk-strong" },
+  { tag: tags.emphasis, class: "tk-em" },
+  { tag: [tags.link, tags.url], class: "tk-link" },
+  { tag: tags.monospace, class: "tk-string" },
+  { tag: tags.invalid, class: "tk-invalid" },
 ]);
 
 const theme = EditorView.theme({
@@ -43,7 +56,7 @@ const theme = EditorView.theme({
   ".cm-scroller": {
     fontFamily: "var(--font-code)",
     fontSize: "var(--code-size)",
-    lineHeight: "1.6",
+    lineHeight: "var(--code-line-height)",
   },
   ".cm-content": { caretColor: "var(--text)", padding: "0" },
   ".cm-gutters": {
@@ -107,6 +120,14 @@ const theme = EditorView.theme({
   ".tk-macro": { color: "var(--tk-macro)" },
   ".tk-call": { color: "var(--tk-call)" },
   ".tk-number": { color: "var(--tk-number)" },
+  ".tk-property": { color: "var(--tk-property)" },
+  ".tk-atom": { color: "var(--tk-keyword)" },
+  ".tk-tag": { color: "var(--tk-macro)" },
+  ".tk-heading": { color: "var(--tk-keyword)", fontWeight: "700" },
+  ".tk-strong": { fontWeight: "700" },
+  ".tk-em": { fontStyle: "italic" },
+  ".tk-link": { color: "var(--tk-type)", textDecoration: "underline" },
+  ".tk-invalid": { color: "var(--red)" },
 
   // Hunk colors come from our own hunks, not CodeMirror's character diff.
   ".cm-changedLine": { backgroundColor: "transparent !important" },
@@ -145,7 +166,7 @@ const theme = EditorView.theme({
   ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
     padding: "1px 8px 1px 4px",
     borderRadius: "4px",
-    lineHeight: "1.6",
+    lineHeight: "var(--code-line-height)",
   },
   ".cm-tooltip-autocomplete ul li[aria-selected]": {
     backgroundColor: "var(--selection)",
@@ -195,6 +216,18 @@ const theme = EditorView.theme({
     margin: "0 3px",
   },
   ".cm-specialChar": { color: "var(--red)" },
+  ".cm-highlightSpace": {
+    backgroundImage:
+      "radial-gradient(circle at 50% 55%, var(--line-strong) 12%, transparent 12%)",
+  },
+  ".cm-highlightTab": {
+    backgroundImage:
+      "linear-gradient(to right, transparent 20%, var(--line-strong) 20%, var(--line-strong) 80%, transparent 80%)",
+    backgroundSize: "auto 1px",
+    backgroundPosition: "0 55%",
+    backgroundRepeat: "no-repeat",
+  },
+  ".cm-trailingSpace": { backgroundColor: "var(--del-bg)" },
 
   // Find widget (components/FindPanel.tsx).
   // Floats over the code at the top right, like VS Code, instead of pushing it down.
@@ -306,15 +339,58 @@ export const sharedExtensions: Extension = [
   syntaxHighlighting(tokenHighlighter),
 ];
 
+// Object keys and properties, for every language but Rust: Rust tags struct fields
+// the same way, and those stay uncolored to match the designs.
+const dataHighlighter = syntaxHighlighting(
+  tagHighlighter([
+    {
+      tag: [tags.propertyName, tags.definition(tags.variableName)],
+      class: "tk-property",
+    },
+    { tag: [tags.bool, tags.null, tags.atom], class: "tk-atom" },
+  ]),
+);
+
+/** Which language a file is, by name, from the 140-odd that CodeMirror knows. */
+function describe(path: string): LanguageDescription | null {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (name === "Cargo.lock") {
+    return LanguageDescription.matchLanguageName(languages, "TOML");
+  }
+  return (
+    LanguageDescription.matchFilename(languages, name) ??
+    LanguageDescription.matchFilename(languages, name.toLowerCase())
+  );
+}
+
+function withColors(description: LanguageDescription, support: Extension) {
+  return description.name === "Rust" ? support : [support, dataHighlighter];
+}
+
+/** The file's language if it has already loaded; otherwise nothing, until `loadLanguage`. */
 export function languageFor(path: string): Extension {
-  return path.endsWith(".rs") ? rust() : [];
+  const description = describe(path);
+  return description?.support
+    ? withColors(description, description.support)
+    : [];
+}
+
+/**
+ * Loads the file's language. Each one is a separate chunk of the app, served
+ * locally like the rest of it, so only the languages in use are loaded.
+ */
+export async function loadLanguage(path: string): Promise<Extension> {
+  const description = describe(path);
+  if (!description) return [];
+  try {
+    return withColors(description, await description.load());
+  } catch {
+    return [];
+  }
 }
 
 export function languageName(path: string): string {
-  if (path.endsWith(".rs")) return "Rust";
-  if (path.endsWith(".toml")) return "TOML";
-  if (path.endsWith(".md")) return "Markdown";
-  return "Plain text";
+  return describe(path)?.name ?? "Plain text";
 }
 
 // Syntax colors for code shown outside an editor, using the same parser and classes.
