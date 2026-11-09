@@ -3,6 +3,7 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import { DEFAULT_ACCOUNT } from "../backend";
 import { AccountBadge, ColorPicker, Modal } from "../components/Common";
+import { Dropdown } from "../components/Dropdown";
 import { PlusIcon } from "../components/Icons";
 import {
   accountById,
@@ -369,21 +370,20 @@ export function AccountPicker() {
   const selected = () => accountById(accounts.selected);
   return (
     <div class="account-picker">
-      <label class="field">
-        <span class="field-label">Account</span>
-        <select
-          class="input"
-          value={accounts.selected}
-          onChange={(e) => {
-            selectAccount(e.currentTarget.value);
-            void refreshStatus(e.currentTarget.value);
-          }}
-        >
-          <For each={accounts.list}>
-            {(account) => <option value={account.id}>{account.label}</option>}
-          </For>
-        </select>
-      </label>
+      <Dropdown
+        label="Account"
+        class="account-dropdown"
+        value={accounts.selected}
+        options={accounts.list.map((account) => ({
+          value: account.id,
+          label: account.label,
+          icon: <span class={`dot acct-dot acct-${account.color}`} />,
+        }))}
+        onChange={(id) => {
+          selectAccount(id);
+          void refreshStatus(id);
+        }}
+      />
       <Show when={selected()}>
         {(account) => (
           <span

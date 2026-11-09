@@ -8,6 +8,7 @@ import {
   Switch,
 } from "solid-js";
 import { AccountBadge, Empty } from "../components/Common";
+import { Dropdown } from "../components/Dropdown";
 import { ArrowUp, CloseIcon } from "../components/Icons";
 import { Mascot } from "../components/Mascot";
 import { accountById, accounts, startSignIn } from "../state/accounts";
@@ -21,6 +22,7 @@ import {
   MODES,
   type PermissionRequest,
   sendToClaude,
+  setMode,
   setModel,
   startClaude,
   stopClaude,
@@ -139,21 +141,31 @@ function PermissionPrompt(props: { request: PermissionRequest }) {
   );
 }
 
-function ModeButton() {
+function ModePicker() {
   const current = () => MODES.find((m) => m.value === claude.mode);
   return (
-    <button
-      type="button"
-      class="composer-btn mode-btn"
-      classList={{
+    <Dropdown
+      label="Mode"
+      up
+      class="mode-picker"
+      classes={{
         "mode-accept": claude.mode === "acceptEdits",
         "mode-plan": claude.mode === "plan",
       }}
-      title={`${current()?.hint ?? `Claude Code's mode: ${claude.mode}`} Click or press Shift+Tab to switch.`}
-      onClick={cycleMode}
-    >
-      {current()?.label ?? claude.mode}
-    </button>
+      title={`${current()?.hint ?? `Claude Code's mode: ${claude.mode}`} Shift+Tab switches.`}
+      value={claude.mode}
+      options={MODES.map((m) => ({
+        value: m.value,
+        label: m.label,
+        hint: m.hint,
+      }))}
+      onChange={(value) => {
+        // `claude.mode` is a string, since Claude Code can report modes Claudine
+        // doesn't offer; only the offered ones are in the list.
+        const mode = MODES.find((m) => m.value === value);
+        if (mode) void setMode(mode.value);
+      }}
+    />
   );
 }
 
@@ -162,17 +174,19 @@ function ModelPicker() {
     claude.models.find((m) => m.value === claude.modelChoice)?.description;
   return (
     <Show when={claude.models.length > 0}>
-      <select
-        class="composer-btn model-select"
-        aria-label="Model"
+      <Dropdown
+        label="Model"
+        up
+        class="model-picker"
         title={[description(), claude.model].filter(Boolean).join(" · ")}
         value={claude.modelChoice}
-        onChange={(e) => void setModel(e.currentTarget.value)}
-      >
-        <For each={claude.models}>
-          {(model) => <option value={model.value}>{model.name}</option>}
-        </For>
-      </select>
+        options={claude.models.map((m) => ({
+          value: m.value,
+          label: m.name,
+          hint: m.description,
+        }))}
+        onChange={(model) => void setModel(model)}
+      />
     </Show>
   );
 }
@@ -220,7 +234,7 @@ function Composer() {
         }}
       />
       <div class="composer-row">
-        <ModeButton />
+        <ModePicker />
         <ModelPicker />
         <Show when={working()}>
           <button

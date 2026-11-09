@@ -60,7 +60,7 @@ const theme = EditorView.theme({
   },
   ".cm-content": { caretColor: "var(--text)", padding: "0" },
   ".cm-gutters": {
-    backgroundColor: "var(--bg)",
+    backgroundColor: "var(--editor)",
     color: "var(--muted)",
     border: "none",
   },
@@ -89,8 +89,8 @@ const theme = EditorView.theme({
     borderBottom: "4px solid transparent",
     borderLeft: "5px solid var(--del-ink)",
   },
-  ".cm-activeLine": { backgroundColor: "var(--hover)" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--hover)" },
+  ".cm-activeLine": { backgroundColor: "var(--editor-line)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--editor-line)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
     { backgroundColor: "var(--selection)" },
