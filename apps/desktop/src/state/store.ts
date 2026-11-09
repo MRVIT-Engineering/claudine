@@ -77,7 +77,7 @@ export const WIDTHS = {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
-  accent: "violet",
+  accent: "coral",
   fontSize: 13,
   editorFont: "jetbrains",
   ligatures: true,
@@ -215,9 +215,9 @@ function legacySettings(): Settings | null {
     ...legacy.settings,
     setupDone: legacy.setupDone === true,
   });
-  // Version 1 saved coral as the default. Move those to Claudine's purple.
+  // Version 1 saved coral as the default; keep what those users actually saw then.
   if (legacy.version !== LEGACY_VERSION && settings.accent === "coral") {
-    settings.accent = DEFAULT_SETTINGS.accent;
+    settings.accent = "violet";
   }
   return settings;
 }

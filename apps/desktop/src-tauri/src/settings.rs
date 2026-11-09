@@ -102,7 +102,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             theme: Theme::Dark,
-            accent: Accent::Violet,
+            accent: Accent::Coral,
             font_size: 13,
             editor_font: EditorFont::Jetbrains,
             ligatures: true,

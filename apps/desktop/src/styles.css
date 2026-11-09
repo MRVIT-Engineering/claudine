@@ -10,55 +10,57 @@
   --chat-width: 320px;
   --settings-nav-width: 210px;
 
-  --bg: #0c0e11;
-  --panel: #14171b;
+  /* Colors from the Claudine designs. */
+  --bg: #0d0e10;
+  --panel: #111215;
   /* The editor sits a step lighter than the tree and chat around it. */
-  --editor: #1a1d22;
+  --editor: #141619;
+  --editor-line: #1b1d21;
   /* File tree and chat. */
-  --side: #101215;
-  --editor-line: #23272e;
-  --panel-2: #191c21;
-  --field: #0a0c0e;
-  --line: #262a30;
-  --line-strong: #383e46;
-  --text: #eceef0;
-  --text-2: #b7bcc2;
-  --muted: #8c929a;
-  --hover: #1c2026;
-  --selected: #20252c;
+  --side: #111215;
+  --panel-2: #191b1f;
+  --field: #0d0e10;
+  --line: #27292e;
+  --line-strong: #35383d;
+  --text: #e8e6e1;
+  --text-2: #bebdba;
+  --muted: #81858b;
+  --hover: #1f2125;
+  --selected: #1f2125;
 
-  /* Claudine's purple, from her body in the logo. */
-  --accent: #c07afd;
-  --accent-ink: #1d0b33;
-  --accent-soft: #2a1f3d;
+  /* Claude's terracotta, from the designs. */
+  --accent: #cc7c5e;
+  --accent-ink: #1d0f08;
+  --accent-soft: #29201e;
 
-  --green: #6ee0a8;
+  --green: #7cc79a;
   --green-ink: #06281a;
-  --green-soft: #1f3a2e;
-  --red: #f0887a;
-  --blue: #85b8ff;
-  --amber: #f0c476;
+  --green-soft: #1d2925;
+  --red: #de9885;
+  --blue: #8bb6f9;
+  --blue-soft: #232a37;
+  --amber: #e9c484;
   --amber-soft: #211b10;
   --amber-line: #5c4a26;
 
-  --add-bg: #1a2f28;
-  --add-gutter: #1d3a2f;
-  --add-ink: #6ee0a8;
-  --del-bg: #3a211f;
-  --del-gutter: #472623;
-  --del-ink: #f0887a;
-  --hatch: #1b1e23;
+  --add-bg: #192621;
+  --add-gutter: #1d2e27;
+  --add-ink: #7cc79a;
+  --del-bg: #2e1d1c;
+  --del-gutter: #3a2321;
+  --del-ink: #de9885;
+  --hatch: #1b1d21;
 
-  --selection: #33475f;
-  --tk-keyword: #c9a6ff;
-  --tk-type: #85b8ff;
-  --tk-call: #f0c476;
-  --tk-macro: #f0a3c8;
-  --tk-string: #8fdcb0;
-  --tk-comment: #7b828b;
-  --tk-attr: #f0c476;
+  --selection: #2f3d52;
+  --tk-keyword: #c3a3f9;
+  --tk-type: #8bb6f9;
+  --tk-call: #e9c484;
+  --tk-macro: #e9c484;
+  --tk-string: #9fd4b0;
+  --tk-comment: #81858b;
+  --tk-attr: #e9c484;
   --tk-number: #f0a97a;
-  --tk-property: #9ccfff;
+  --tk-property: #e8e6e1;
 }
 
 :root[data-theme="light"] {
@@ -85,6 +87,7 @@
   --green-soft: #d6f0e2;
   --red: #b83b2a;
   --blue: #1e63c4;
+  --blue-soft: #e1ecfb;
   --amber: #8f6210;
   --amber-soft: #fbf3e0;
   --amber-line: #dfc98f;
@@ -107,10 +110,20 @@
   --tk-property: #0f5fa8;
 }
 
+:root[data-accent="violet"] {
+  --accent: #c07afd;
+  --accent-ink: #1d0b33;
+  --accent-soft: #2a1f3d;
+}
+:root[data-theme="light"][data-accent="violet"] {
+  --accent: #8445e6;
+  --accent-ink: #ffffff;
+  --accent-soft: #efe4fd;
+}
 :root[data-accent="coral"] {
-  --accent: #dd7350;
-  --accent-ink: #1b0d07;
-  --accent-soft: #2e201b;
+  --accent: #cc7c5e;
+  --accent-ink: #1d0f08;
+  --accent-soft: #29201e;
 }
 :root[data-theme="light"][data-accent="coral"] {
   --accent-soft: #f8e5dd;
@@ -524,7 +537,7 @@ select:focus-visible {
   background: var(--panel);
 }
 :root:not([data-theme="light"]) .appbar {
-  background: #0e1013;
+  background: var(--side);
 }
 .brand {
   display: inline-flex;
@@ -605,7 +618,7 @@ select:focus-visible {
   white-space: nowrap;
 }
 :root:not([data-theme="light"]) .statusbar {
-  background: #0e1013;
+  background: var(--side);
 }
 .status-btn {
   font-size: inherit;
@@ -732,9 +745,6 @@ select:focus-visible {
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   background: var(--panel);
-}
-:root:not([data-theme="light"]) .file-tabs {
-  background: #101215;
 }
 .file-tab {
   position: relative;
@@ -1529,7 +1539,7 @@ h1 {
   --swatch: #c07afd;
 }
 .accent-coral {
-  --swatch: #dd7350;
+  --swatch: #cc7c5e;
 }
 .accent-peach {
   --swatch: #ec9a7d;
@@ -2200,9 +2210,6 @@ h1 {
   border-right: 1px solid var(--line);
   background: var(--panel);
 }
-:root:not([data-theme="light"]) .activity-bar {
-  background: #0e1013;
-}
 .activity-btn {
   display: flex;
   align-items: center;
@@ -2237,9 +2244,6 @@ h1 {
   flex: none;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
-}
-:root:not([data-theme="light"]) .file-tabs-bar {
-  background: #101215;
 }
 .file-tabs-bar .file-tabs {
   flex: 1;
@@ -3177,3 +3181,4 @@ button.md-file-link {
 .acct-dot {
   background: var(--acct);
 }
+
