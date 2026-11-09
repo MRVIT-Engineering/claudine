@@ -245,6 +245,16 @@ function Blocks(props: { blocks: Block[]; from: string }) {
   );
 }
 
+/** Markdown text, such as a chat message, rendered the same safe way. */
+export function MarkdownText(props: { text: string; class?: string }) {
+  const blocks = createMemo(() => parseMarkdown(props.text));
+  return (
+    <div class={`md-body ${props.class ?? ""}`}>
+      <Blocks blocks={blocks()} from="" />
+    </div>
+  );
+}
+
 /** The rendered file, in place of the editor. */
 export function MarkdownPreview(props: { path: string }) {
   const blocks = createMemo(() => parseMarkdown(currentText(props.path)));

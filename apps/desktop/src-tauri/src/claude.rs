@@ -92,6 +92,10 @@ pub enum SessionEvent {
     UserEcho {
         text: String,
     },
+    /// A message the user sent to a run, recorded by Claudine when it's sent.
+    UserMessage {
+        text: String,
+    },
     /// The account's usage status. `rejected` means it hit a usage limit.
     RateLimit {
         status: String,

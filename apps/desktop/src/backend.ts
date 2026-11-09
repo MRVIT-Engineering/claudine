@@ -64,6 +64,7 @@ export type SessionEvent =
     }
   | { kind: "plan"; items: PlanItem[] }
   | { kind: "userEcho"; text: string }
+  | { kind: "userMessage"; text: string }
   | { kind: "rateLimit"; status: string; resetsAt: number | null }
   | { kind: "options"; models: ModelOption[]; mode: string }
   | { kind: "mode"; mode: string }

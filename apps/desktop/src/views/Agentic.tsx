@@ -19,6 +19,7 @@ import { Dropdown } from "../components/Dropdown";
 import { ArrowUp, CheckIcon, ChevronDown, PlusIcon } from "../components/Icons";
 import { Mascot } from "../components/Mascot";
 import { RunChanges } from "../components/RunChanges";
+import { Working } from "../components/Working";
 import { accountById, accounts, loadAccounts } from "../state/accounts";
 import {
   answerRunPermission,
@@ -465,11 +466,23 @@ function RunComposer(props: { run: Run }) {
 function Conversation(props: { run: Run }) {
   let scroller!: HTMLDivElement;
   const entries = () => runs.transcripts[props.run.id] ?? [];
-  const queued = () => runs.queued[props.run.id] ?? [];
+  // The last `queued` messages the user sent are ones Claude hasn't read yet.
+  const queuedFrom = createMemo(() => {
+    const users = entries()
+      .map((entry, i) => (entry.kind === "user" ? i : -1))
+      .filter((i) => i >= 0);
+    return props.run.queued > 0
+      ? (users[users.length - props.run.queued] ?? Infinity)
+      : Infinity;
+  });
+  const working = () =>
+    (props.run.state === "running" || props.run.state === "finishing") &&
+    props.run.live &&
+    props.run.permissions.length === 0;
   // Follows new messages while the user is near the bottom.
   createEffect(
     on(
-      () => [entries().length, props.run.permissions.length, queued().length],
+      () => [entries().length, props.run.permissions.length, working()],
       () => {
         const near =
           scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
@@ -484,7 +497,14 @@ function Conversation(props: { run: Run }) {
       <div class="run-scroll" ref={scroller}>
         <PlanCard run={props.run} />
         <div class="run-entries">
-          <For each={entries()}>{(entry) => <Entry entry={entry} />}</For>
+          <For each={entries()}>
+            {(entry, i) => (
+              <Entry
+                entry={entry}
+                queued={entry.kind === "user" && i() >= queuedFrom()}
+              />
+            )}
+          </For>
           <For each={props.run.permissions}>
             {(request) => (
               <PermissionPrompt
@@ -495,20 +515,8 @@ function Conversation(props: { run: Run }) {
               />
             )}
           </For>
-          <For each={queued()}>
-            {(text) => (
-              <div class="chat-user claude-prose is-queued">
-                {text}
-                <span class="queued-note">
-                  Will be sent when Claude finishes this step
-                </span>
-              </div>
-            )}
-          </For>
-          <Show when={props.run.state === "running" && props.run.live}>
-            <div class="claude-notice tone-muted working-line">
-              <span class="cursor" /> Working…
-            </div>
+          <Show when={working()}>
+            <Working entries={entries()} />
           </Show>
         </div>
       </div>

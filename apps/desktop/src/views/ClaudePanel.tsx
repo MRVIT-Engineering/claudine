@@ -10,7 +10,9 @@ import {
 import { AccountBadge, Empty } from "../components/Common";
 import { Dropdown } from "../components/Dropdown";
 import { ArrowUp, CloseIcon } from "../components/Icons";
+import { MarkdownText } from "../components/MarkdownPreview";
 import { Mascot } from "../components/Mascot";
+import { Working } from "../components/Working";
 import { accountById, accounts, startSignIn } from "../state/accounts";
 import {
   answerPermission,
@@ -31,14 +33,10 @@ import {
 import { openFile, state } from "../state/store";
 import { AccountPicker, SignInBox } from "./ClaudeAccounts";
 
-/** Text with `code` spans. Rendered as text nodes, never as HTML. */
+/** Claude's Markdown, built as DOM nodes, never as HTML. */
 function Prose(props: { text: string }) {
   return (
-    <p class="chat-text claude-prose">
-      {props.text
-        .split("`")
-        .map((part, i) => (i % 2 === 1 ? <code>{part}</code> : part))}
-    </p>
+    <MarkdownText text={props.text} class="chat-text claude-prose md-chat" />
   );
 }
 
@@ -89,12 +87,25 @@ function ToolEntry(props: { entry: Extract<ChatEntry, { kind: "tool" }> }) {
   );
 }
 
-export function Entry(props: { entry: ChatEntry }) {
+/** One chat entry. `queued` marks a message Claude hasn't read yet. */
+export function Entry(props: { entry: ChatEntry; queued?: boolean }) {
   // Entries are only appended, and a tool's `result` is read reactively inside ToolEntry.
   const entry = props.entry;
   switch (entry.kind) {
     case "user":
-      return <div class="chat-user claude-prose">{entry.text}</div>;
+      return (
+        <div
+          class="chat-user claude-prose"
+          classList={{ "is-queued": props.queued }}
+        >
+          {entry.text}
+          <Show when={props.queued}>
+            <span class="queued-note">
+              Queued: Claude reads it at its next step
+            </span>
+          </Show>
+        </div>
+      );
     case "text":
       return <Prose text={entry.text} />;
     case "tool":
@@ -414,6 +425,11 @@ export function ClaudePanel() {
         <For each={claude.permissions}>
           {(request) => <PermissionPrompt request={request} />}
         </For>
+        <Show
+          when={claude.status === "working" && claude.permissions.length === 0}
+        >
+          <Working entries={claude.entries} />
+        </Show>
         <Show when={!live()}>
           <StartScreen />
         </Show>

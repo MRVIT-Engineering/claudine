@@ -32,8 +32,6 @@ interface RunsStore {
   creating: boolean;
   newRun: NewRunInfo | null;
   transcripts: Record<string, ChatEntry[]>;
-  /** Messages sent that Claude hasn't read yet, shown as queued. */
-  queued: Record<string, string[]>;
   changes: Record<string, ChangesState>;
   tabs: Record<string, RunTab>;
   /** Shows only the diff since the last review. */
@@ -49,7 +47,6 @@ const [runs, setRuns] = createStore<RunsStore>({
   creating: false,
   newRun: null,
   transcripts: {},
-  queued: {},
   changes: {},
   tabs: {},
   sinceLast: {},
@@ -168,13 +165,6 @@ function onUpdate(update: RunUpdate) {
           produce((entries) => applyEvent(entries, update.event)),
         );
       }
-      if (update.event.kind === "userEcho") {
-        const text = update.event.text;
-        setRuns("queued", update.run, (list = []) => {
-          const at = list.indexOf(text);
-          return at >= 0 ? list.filter((_, i) => i !== at) : list.slice(1);
-        });
-      }
       return;
     case "filesChanged":
       scheduleChanges(update.run);
@@ -185,7 +175,9 @@ function onUpdate(update: RunUpdate) {
 /** Turns one recorded or live event into chat entries, like the Editor chat does. */
 function applyEvent(entries: ChatEntry[], event: SessionEvent) {
   switch (event.kind) {
+    // Older transcripts showed Claude's echo; newer ones record the message when sent.
     case "userEcho":
+    case "userMessage":
       entries.push({ kind: "user", text: event.text });
       return;
     case "text":
@@ -315,13 +307,8 @@ export async function createRun(
 }
 
 export async function sendRunMessage(id: string, text: string) {
-  const run = runById(id);
   try {
     await backend.sendRunMessage(id, text);
-    // While Claude works, the message waits until it's read at the next step.
-    if (run?.state === "running" || run?.state === "paused") {
-      setRuns("queued", id, (list = []) => [...list, text]);
-    }
     return true;
   } catch (error) {
     showError(error);

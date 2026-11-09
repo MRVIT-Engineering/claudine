@@ -567,6 +567,19 @@ impl Inner {
         }
     }
 
+    /// Shows the user's message in the run's conversation as soon as it's sent. Claude's
+    /// echo of it only marks it read.
+    fn user_said(&self, id: &str, text: &str) {
+        let event = SessionEvent::UserMessage {
+            text: text.to_string(),
+        };
+        self.record_event(id, &event);
+        self.emit(RunUpdate::Event {
+            run: id.to_string(),
+            event,
+        });
+    }
+
     /// Adds a line to the conversation that Claudine itself says.
     fn notice(&self, id: &str, message: String) {
         let event = SessionEvent::Notice { message };
@@ -764,9 +777,10 @@ fn is_limit_message(message: &str) -> bool {
 impl Inner {
     /// Every event from a run's `claude`, on its reader thread.
     fn on_event(self: &Arc<Self>, id: &str, generation: u64, event: SessionEvent) {
-        // Quiet "allowed" usage events aren't worth keeping.
-        let mut noisy =
-            matches!(&event, SessionEvent::RateLimit { status, .. } if status == "allowed");
+        // Quiet "allowed" usage events aren't worth keeping, and echoes only mark the
+        // user's message read; it was shown when it was sent.
+        let mut noisy = matches!(&event, SessionEvent::RateLimit { status, .. } if status == "allowed")
+            || matches!(event, SessionEvent::UserEcho { .. });
         let mut finish = false;
         let mut explained: Option<String> = None;
         {
@@ -1675,6 +1689,7 @@ fn create_run(
         live.queued += 1;
         live.session.send_user(task)?;
     }
+    inner.user_said(&id, task);
     inner.changed(&store, &id);
     Ok(id)
 }
@@ -1799,6 +1814,7 @@ pub fn send_run_message(
     let live = store.live.get_mut(&id).ok_or(CommandError::NoSession)?;
     live.session.send_user(&text)?;
     live.queued += 1;
+    inner.user_said(&id, &text);
     inner.changed(&store, &id);
     Ok(())
 }
@@ -1851,6 +1867,7 @@ pub fn resume_run(runs: State<'_, RunsState>, id: String) -> Result<(), CommandE
     let live = store.live.get_mut(&id).ok_or(CommandError::NoSession)?;
     live.session.send_user(message)?;
     live.queued += 1;
+    inner.user_said(&id, message);
     inner.changed(&store, &id);
     Ok(())
 }
@@ -2054,6 +2071,7 @@ fn request_changes(inner: &Arc<Inner>, id: &str, note: &str) -> Result<(), Comma
     let live = store.live.get_mut(id).ok_or(CommandError::NoSession)?;
     live.session.send_user(&message)?;
     live.queued += 1;
+    inner.user_said(id, &message);
     inner.changed(&store, id);
     Ok(())
 }

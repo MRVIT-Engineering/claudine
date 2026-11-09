@@ -3989,3 +3989,117 @@ progress::-webkit-progress-value {
   gap: 8px;
   max-width: 720px;
 }
+
+/* Claude's Markdown in chats: the preview's styles, sized for a conversation. */
+.md-body.md-chat {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+  line-height: 1.55;
+  white-space: normal;
+}
+.md-chat :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1em 0 0.4em;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.md-chat h1 {
+  font-size: 1.3em;
+}
+.md-chat h2 {
+  font-size: 1.15em;
+}
+.md-chat :is(h3, h4, h5, h6) {
+  font-size: 1em;
+}
+.md-chat :is(p, ul, ol, blockquote, pre, .md-table, hr) {
+  margin: 0 0 0.7em;
+}
+.md-chat > :last-child {
+  margin-bottom: 0;
+}
+
+/* "Thinking it through…" while Claude works */
+.working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: 13px;
+}
+.working-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+.working-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: working-bounce 1.2s ease-in-out infinite;
+}
+.working-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.working-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes working-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+.working-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* A light sweeps across the words. */
+  background:
+    linear-gradient(
+      90deg,
+      var(--muted) 0%,
+      var(--muted) 40%,
+      var(--text) 50%,
+      var(--muted) 60%,
+      var(--muted) 100%
+    )
+    0 0 / 300% 100%;
+  background-clip: text;
+  color: transparent;
+  animation:
+    working-sweep 2.4s linear infinite,
+    working-in 0.35s ease-out;
+}
+@keyframes working-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@keyframes working-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .working-dots span,
+  .working-text {
+    animation: none;
+  }
+  .working-text {
+    color: var(--muted);
+  }
+}
