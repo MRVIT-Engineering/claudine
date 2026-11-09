@@ -6,9 +6,11 @@ Every direct dependency, with the reason it's here.
 
 | Crate | Version | Used by | Reason |
 |---|---|---|---|
+| `cap-std` | 3.4.6 | `crates/core` | Opens files relative to a directory handle, so paths can't escape the project, even in a symlink race. |
 | `serde` | 1.0.229 | `crates/protocol` | Derives serialization for messages between the hook and the app. |
-| `serde_json` | 1.0.154 | `crates/protocol` | JSON wire format for those messages. |
+| `serde_json` | 1.0.154 | `crates/protocol`, `apps/desktop/src-tauri` | JSON wire format for hook messages, and the settings file. |
 | `tauri` | 2.12.5 | `apps/desktop/src-tauri` | Desktop app framework: window, webview, IPC. |
+| `tauri-plugin-dialog` | 2.8.4 | `apps/desktop/src-tauri` | Native folder picker, called only from Rust. The webview has no `dialog:*` permission. |
 | `tauri-build` | 2.7.4 | `apps/desktop/src-tauri` (build) | Compiles the config, capabilities and command permissions at build time. |
 
 ## npm
@@ -16,6 +18,16 @@ Every direct dependency, with the reason it's here.
 | Package | Version | Used by | Reason |
 |---|---|---|---|
 | `solid-js` | 1.9.17 | `apps/desktop` | UI framework. |
+| `@codemirror/view` | 6.43.15 | `apps/desktop` | The code editor's DOM view. |
+| `@codemirror/state` | 6.7.6 | `apps/desktop` | Editor documents, selections and transactions. |
+| `@codemirror/autocomplete` | 6.20.4 | `apps/desktop` | Completion popup, snippets and auto-closing brackets. |
+| `@codemirror/commands` | 6.11.1 | `apps/desktop` | Editing keybindings and undo history. |
+| `@codemirror/language` | 6.13.1 | `apps/desktop` | Syntax highlighting, indentation and bracket matching. |
+| `@codemirror/search` | 6.7.2 | `apps/desktop` | Find and replace. |
+| `@codemirror/merge` | 6.12.3 | `apps/desktop` | Aligned side-by-side and inline diff review. |
+| `@codemirror/lang-rust` | 6.0.2 | `apps/desktop` | Rust syntax support, loaded up front for the code previews outside the editor. |
+| `@codemirror/language-data` | 6.5.2 | `apps/desktop` | Recognizes about 140 languages by file name and loads each one only when a file needs it. Brings in the official `@codemirror/lang-*` packages and `legacy-modes`, all MIT. |
+| `@lezer/highlight` | 1.2.5 | `apps/desktop` | Maps syntax tokens to our theme's classes, and colors code outside the editor. |
 | `@tauri-apps/api` | 2.12.4 | `apps/desktop` | `invoke`, the call from the UI to Rust commands. |
 | `@tauri-apps/cli` | 2.12.4 | `apps/desktop` (dev) | `tauri dev` and `tauri build`. |
 | `typescript` | 7.0.2 | `apps/desktop` (dev) | Type checking with `tsc --noEmit`. |

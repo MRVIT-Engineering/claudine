@@ -27,7 +27,7 @@ allow = [
 confidence-threshold = 0.9
 # Keep the approved list above even if nothing uses an entry right now.
 unused-allowed-license = "allow"
-# Approved per crate, not globally: all of these come in through Tauri. A new crate
+# Approved per crate, not globally: these come in through Tauri and cap-std. A new crate
 # under one of these licenses still fails and needs review.
 exceptions = [
   { allow = ["MPL-2.0"], crate = "cssparser" },
@@ -36,6 +36,7 @@ exceptions = [
   { allow = ["MPL-2.0"], crate = "option-ext" },
   { allow = ["MPL-2.0"], crate = "selectors" },
   { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" },
+  { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "winx" },
 ]
 
 [licenses.private]
@@ -45,6 +46,8 @@ ignore = true
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Our own crates depend on each other by path; they are never published.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

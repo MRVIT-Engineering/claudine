@@ -4,7 +4,7 @@ A security-first desktop code editor that wraps the official `claude` CLI. `my-e
 
 It will run `claude` in an embedded terminal, show full-file diffs of Claude's edits via Claude Code hooks, and have a file tree. It has no extension system, no marketplace, and no network access from the app itself.
 
-**Status:** bare project setup. The app opens a window that shows its version, and nothing else yet.
+**Status:** opens a real folder (⌘O), browses its files and opens them in the editor. Edits stay in memory, because saving isn't built yet. Claude isn't connected: the session, chat, Parallel and Accounts screens are a design preview, hidden behind `PREVIEW_CLAUDE` in `apps/desktop/src/lib/flags.ts`.
 
 ## Prerequisites
 
