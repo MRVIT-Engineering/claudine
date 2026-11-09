@@ -414,6 +414,33 @@ export function languageName(path: string): string {
   return describe(path)?.name ?? "Plain text";
 }
 
+/** Colors single lines of `path`'s language, for diffs shown outside an editor. */
+export async function lineHighlighter(
+  path: string,
+): Promise<((line: string) => JSX.Element) | null> {
+  const description = describe(path);
+  if (!description) return null;
+  try {
+    const support = await description.load();
+    const parser = support.language.parser;
+    return (line: string) => {
+      const parts: JSX.Element[] = [];
+      highlightCode(
+        line,
+        parser.parse(line),
+        tokenHighlighter,
+        (text, classes) => {
+          parts.push(classes ? <span class={classes}>{text}</span> : text);
+        },
+        () => {},
+      );
+      return parts;
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Syntax colors for code shown outside an editor, using the same parser and classes.
 export function highlight(line: string): JSX.Element {
   const parts: JSX.Element[] = [];

@@ -20,6 +20,7 @@ The packages still use the placeholder name `my-editor`.
 - **Read and edit code.** A CodeMirror 6 editor with VS Code-style shortcuts, find and replace, folding, syntax highlighting for 140+ languages, and file icons per language and tool. Edits stay in memory for now, because saving isn't built yet.
 - **Talk to Claude Code.** The Claude panel starts your own `claude` install in the open folder. Each file write, edit or command shows up as a request with the content or diff, and runs only after you click Allow. Switch between asking, accepting edits and plan mode (Shift+Tab), and pick the model, from the composer.
 - **Several Claude accounts.** Add accounts in Settings, each with its own Claude Code login, and pick one when you start a session. Sign-in is Claude Code's own; Claudine never sees a token.
+- **Agentic mode.** Hand Claude a task and it works on its own, in auto mode, on a new branch in its own git worktree, so several runs can work while you keep editing. Watch the conversation and plan, steer it with messages, and see the changes as they happen. When it's done, review it like a pull request: Claude's explanation of every file, check results, line comments, then approve (commit, push and open a PR with `gh`) or request changes for another revision.
 - **Preview Markdown.** Turn on Preview above a `.md` file (⇧⌘V) to see it rendered in the same tab.
 - **Settings that stick.** Theme, accent, fonts, editor options, hidden files and panel widths are saved per user.
 
@@ -31,7 +32,7 @@ The session, Parallel and Accounts screens from the design are still a preview o
 - **Files stay inside the project.** Every file access goes through a path guard built on [`cap-std`](https://github.com/bytecodealliance/cap-std), which also closes symlink races.
 - **Approvals can't be changed by the UI.** Rust keeps each permission request from Claude. The UI answers with an id and yes or no, and Rust sends Claude the input it kept.
 - **Folders are trusted explicitly.** Before Claude first runs in a folder, Claudine asks natively, because a project's `.claude/` and `.mcp.json` can run commands.
-- **No network from the app.** Only the `claude` process talks to the network. No telemetry, no plugins, no extension marketplace, no remote code.
+- **No network from the app.** Only the `claude` process talks to the network, except `git push` and `gh pr create` when you approve an Agentic run, after a native confirmation. No telemetry, no plugins, no extension marketplace, no remote code.
 - **Your own Claude Code.** Claudine never bundles, downloads or installs it.
 
 [SECURITY.md](SECURITY.md) has the full list, including known limits.

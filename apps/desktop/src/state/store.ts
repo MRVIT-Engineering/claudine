@@ -100,6 +100,17 @@ export const DEFAULT_SETTINGS: Settings = {
   chatWidth: 320,
   settingsNavWidth: 210,
   setupDone: false,
+  prePrReview: true,
+  runPermissions: "auto",
+  onApprove: "pr",
+  explainFiles: true,
+  runChecks: true,
+  checkCommands: [],
+  worktreePerRun: true,
+  branchPrefix: "claudine/",
+  denyList: [],
+  maxRunMinutes: 0,
+  maxRunTurns: 0,
 };
 
 const DEFAULT_PREVIEW: PreviewSettings = {
@@ -204,7 +215,29 @@ function parseSettings(raw: unknown): Settings {
       d.settingsNavWidth,
     ),
     setupDone: bool("setupDone"),
+    prePrReview: bool("prePrReview"),
+    runPermissions: pick(
+      s.runPermissions,
+      ["auto", "acceptEdits", "ask"],
+      d.runPermissions,
+    ),
+    onApprove: pick(s.onApprove, ["pr", "commit"], d.onApprove),
+    explainFiles: bool("explainFiles"),
+    runChecks: bool("runChecks"),
+    checkCommands: strings(s.checkCommands, d.checkCommands),
+    worktreePerRun: bool("worktreePerRun"),
+    branchPrefix:
+      typeof s.branchPrefix === "string" ? s.branchPrefix : d.branchPrefix,
+    denyList: strings(s.denyList, d.denyList),
+    maxRunMinutes: clampNumber(s.maxRunMinutes, 0, 24 * 60, d.maxRunMinutes),
+    maxRunTurns: clampNumber(s.maxRunTurns, 0, 1000, d.maxRunTurns),
   };
+}
+
+function strings(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : fallback;
 }
 
 /** Settings saved by an earlier version in the browser, or `null` if there are none. */
@@ -366,6 +399,7 @@ function applyHash() {
     setState("view", "editor");
   } else if (
     view === "editor" ||
+    view === "agentic" ||
     view === "parallel" ||
     view === "accounts" ||
     view === "settings"
@@ -378,6 +412,7 @@ function applyHash() {
     section === "files" ||
     section === "about" ||
     section === "accounts" ||
+    section === "agentic" ||
     section === "sessions"
   ) {
     setState("settingsSection", section);

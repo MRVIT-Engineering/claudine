@@ -89,7 +89,7 @@ function ToolEntry(props: { entry: Extract<ChatEntry, { kind: "tool" }> }) {
   );
 }
 
-function Entry(props: { entry: ChatEntry }) {
+export function Entry(props: { entry: ChatEntry }) {
   // Entries are only appended, and a tool's `result` is read reactively inside ToolEntry.
   const entry = props.entry;
   switch (entry.kind) {
@@ -104,7 +104,15 @@ function Entry(props: { entry: ChatEntry }) {
   }
 }
 
-function PermissionPrompt(props: { request: PermissionRequest }) {
+/** An approval card. `onAnswer` defaults to the Editor session's. */
+export function PermissionPrompt(props: {
+  request: PermissionRequest;
+  onAnswer?: (id: string, allow: boolean) => void;
+}) {
+  const reply = (allow: boolean) =>
+    props.onAnswer
+      ? props.onAnswer(props.request.id, allow)
+      : void answerPermission(props.request.id, allow);
   return (
     <div
       class="permission claude-permission"
@@ -122,17 +130,13 @@ function PermissionPrompt(props: { request: PermissionRequest }) {
         <pre class="claude-permission-detail">{props.request.detail}</pre>
       </Show>
       <div class="row">
-        <button
-          type="button"
-          class="btn btn-sm"
-          onClick={() => void answerPermission(props.request.id, false)}
-        >
+        <button type="button" class="btn btn-sm" onClick={() => reply(false)}>
           Deny
         </button>
         <button
           type="button"
           class="btn btn-sm btn-accent"
-          onClick={() => void answerPermission(props.request.id, true)}
+          onClick={() => reply(true)}
         >
           Allow
         </button>

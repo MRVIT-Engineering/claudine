@@ -1,6 +1,6 @@
 // The only way the UI reaches files and Claude: commands implemented in
-// apps/desktop/src-tauri/src/project.rs, claude.rs and accounts.rs. Every security
-// decision is made there.
+// apps/desktop/src-tauri/src/project.rs, claude.rs, accounts.rs and runs.rs. Every
+// security decision is made there.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AccountColor, Settings } from "./types";
 
@@ -26,11 +26,17 @@ export type CommandError =
   | { kind: "invalidInput" }
   | { kind: "tooManyAccounts" }
   | { kind: "signOutFailed" }
+  | { kind: "gitNotFound" }
+  | { kind: "notARepository" }
+  | { kind: "git"; detail: string }
+  | { kind: "ghUnavailable" }
+  | { kind: "wrongState" }
+  | { kind: "cancelled" }
   | { kind: "unavailable" };
 
 /** Mirrors `SessionEvent` in apps/desktop/src-tauri/src/claude.rs. */
 export type SessionEvent =
-  | { kind: "ready"; model: string }
+  | { kind: "ready"; model: string; sessionId: string }
   | { kind: "text"; text: string }
   | {
       kind: "tool";
@@ -54,12 +60,142 @@ export type SessionEvent =
       isError: boolean;
       message: string | null;
       costUsd: number | null;
+      numTurns: number | null;
     }
+  | { kind: "plan"; items: PlanItem[] }
+  | { kind: "userEcho"; text: string }
+  | { kind: "rateLimit"; status: string; resetsAt: number | null }
   | { kind: "options"; models: ModelOption[]; mode: string }
   | { kind: "mode"; mode: string }
   | { kind: "model"; model: string }
   | { kind: "notice"; message: string }
   | { kind: "exited"; code: number | null; stderr: string };
+
+/** One step of Claude's plan, from its TodoWrite tool. */
+export interface PlanItem {
+  text: string;
+  status: "pending" | "in_progress" | "completed" | string;
+}
+
+/** Mirrors the types in apps/desktop/src-tauri/src/runs.rs. */
+export type RunState =
+  | "running"
+  | "finishing"
+  | "review"
+  | "approved"
+  | "applied"
+  | "paused"
+  | "interrupted";
+
+export type RunPermissions = "auto" | "acceptEdits" | "ask";
+
+export interface RunComment {
+  id: string;
+  path: string;
+  line: number;
+  side: "new" | "old";
+  body: string;
+  revision: number;
+  state: "pending" | "sent" | "resolved";
+  reply: string | null;
+}
+
+export interface RunExplanation {
+  title: string;
+  summary: { heading: string; text: string }[];
+  files: { path: string; explanation: string; risk: string | null }[];
+  replies: { id: string; reply: string }[];
+}
+
+export interface CheckResult {
+  command: string;
+  passed: boolean;
+  tail: string;
+}
+
+export interface PendingPermission {
+  id: string;
+  tool: string;
+  summary: string;
+  detail: string;
+  outside: boolean;
+}
+
+export interface Run {
+  id: string;
+  title: string;
+  task: string;
+  account: string;
+  projectName: string;
+  base: string;
+  branch: string;
+  hasWorktree: boolean;
+  state: RunState;
+  note: string | null;
+  revision: number;
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number | null;
+  turns: number;
+  plan: PlanItem[];
+  comments: RunComment[];
+  viewed: Record<string, string>;
+  checks: CheckResult[];
+  explanation: RunExplanation | null;
+  stats: {
+    files: number;
+    additions: number;
+    deletions: number;
+    paths: string[];
+  };
+  prUrl: string | null;
+  prNumber: number | null;
+  live: boolean;
+  queued: number;
+  permissions: PendingPermission[];
+  hasPrevious: boolean;
+}
+
+export type RunUpdate =
+  | { kind: "changed"; run: Run }
+  | { kind: "removed"; id: string }
+  | { kind: "event"; run: string; event: SessionEvent }
+  | { kind: "filesChanged"; run: string };
+
+export interface DiffLine {
+  kind: "context" | "add" | "del";
+  old: number | null;
+  new: number | null;
+  text: string;
+}
+
+export interface FileDiff {
+  path: string;
+  oldPath: string | null;
+  status: "added" | "modified" | "deleted" | "renamed";
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: { header: string; lines: DiffLine[] }[];
+  truncated: boolean;
+  hash: string;
+}
+
+export interface RunChanges {
+  files: FileDiff[];
+  sinceLastReview: FileDiff[] | null;
+}
+
+export interface NewRunInfo {
+  projectName: string;
+  currentBranch: string | null;
+  branches: string[];
+  branchPrefix: string;
+  worktree: boolean;
+  review: boolean;
+  permissions: RunPermissions;
+  autoAvailable: boolean;
+}
 
 /** One of the models `claude` offers. `value` is what `setModel` takes. */
 export interface ModelOption {
@@ -197,6 +333,48 @@ export const backend = {
     call<void>("submit_sign_in_code", { code }),
   cancelSignIn: () => call<void>("cancel_sign_in"),
   signOut: (account: string) => call<void>("sign_out", { account }),
+
+  newRunInfo: () => call<NewRunInfo>("new_run_info"),
+  /** Makes the branch and worktree and starts Claude there. Rust checks every value. */
+  startRun: (account: string, task: string, base: string) =>
+    call<Run>("start_run", { account, task, base }),
+  listRuns: () => call<Run[]>("list_runs"),
+  /** Run updates arrive on `onUpdate`; a new call replaces the old listener. */
+  watchRuns: (onUpdate: (update: RunUpdate) => void) => {
+    const channel = new Channel<RunUpdate>();
+    channel.onmessage = onUpdate;
+    return call<void>("watch_runs", { onUpdate: channel });
+  },
+  runTranscript: (id: string) => call<SessionEvent[]>("run_transcript", { id }),
+  sendRunMessage: (id: string, text: string) =>
+    call<void>("send_run_message", { id, text }),
+  answerRunPermission: (id: string, request: string, allow: boolean) =>
+    call<void>("answer_run_permission", { id, request, allow }),
+  stopRun: (id: string) => call<void>("stop_run", { id }),
+  resumeRun: (id: string) => call<void>("resume_run", { id }),
+  reviewRunNow: (id: string) => call<void>("review_run_now", { id }),
+  runChanges: (id: string) => call<RunChanges>("run_changes", { id }),
+  addRunComment: (
+    id: string,
+    path: string,
+    line: number,
+    side: "new" | "old",
+    body: string,
+  ) => call<void>("add_run_comment", { id, path, line, side, body }),
+  deleteRunComment: (id: string, comment: string) =>
+    call<void>("delete_run_comment", { id, comment }),
+  setRunViewed: (id: string, path: string, hash: string | null) =>
+    call<void>("set_run_viewed", { id, path, hash }),
+  requestRunChanges: (id: string, note: string) =>
+    call<void>("request_run_changes", { id, note }),
+  ghStatus: () => call<{ installed: boolean; signedIn: boolean }>("gh_status"),
+  /** Rust asks for a native confirmation before committing or pushing. */
+  approveRun: (id: string, commitOnly: boolean) =>
+    call<Run>("approve_run", { id, commitOnly }),
+  /** Rust asks for a native confirmation before deleting anything. */
+  discardRun: (id: string) => call<void>("discard_run", { id }),
+  openRunInEditor: (id: string) =>
+    call<ProjectInfo>("open_run_in_editor", { id }),
 };
 
 export function isCommandError(error: unknown): error is CommandError {
@@ -252,6 +430,18 @@ export function describeError(error: CommandError): string {
       return "You've reached the limit of 20 accounts.";
     case "signOutFailed":
       return "Claude Code couldn't sign this account out, so it was kept. Try again.";
+    case "gitNotFound":
+      return "Git isn't installed where Claudine can find it.";
+    case "notARepository":
+      return "The open folder isn't a git repository, so runs can't make branches.";
+    case "git":
+      return `Git: ${error.detail}`;
+    case "ghUnavailable":
+      return "The GitHub CLI (gh) isn't installed or isn't signed in. Run gh auth login, or approve with commit only.";
+    case "wrongState":
+      return "The run can't do that right now.";
+    case "cancelled":
+      return "Cancelled.";
     case "unavailable":
       return "Opening folders needs the desktop app. Run pnpm tauri dev.";
   }

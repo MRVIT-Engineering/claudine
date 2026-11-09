@@ -2,7 +2,7 @@
 
 How Claudine goes from a mock UI to a real, usable editor.
 
-**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel, with mode and model switching (Later, step 2), on any of several Claude accounts (Later, step 5). Markdown files have a preview. Next: Milestone 5, saving.
+**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel, with mode and model switching (Later, step 2), on any of several Claude accounts (Later, step 5). Markdown files have a preview. Agentic mode runs Claude on its own on a branch and worktree, with a pre-PR review (see `docs/agentic-mode.md`). Next: Milestone 5, saving.
 
 ## The first goal: a usable editor
 
@@ -205,7 +205,7 @@ Rough order, to be planned in detail when we get there:
    - Handle a file with unsaved edits that Claude changes on disk (with Milestone 5's conflict check).
 3. **Socket between hook and app,** with authentication.
 4. **Real approvals and diff review:** replaces the mock `decideHunk` and `approveEdit`. Decisions must move into Rust. Per-hunk accept needs its own design, because `PreToolUse` decides on a whole tool call.
-5. **Accounts (first slice done):** a separate config folder per account, with sign-in, status and sign-out through `claude auth`, and an account picker in the Claude panel. See `apps/desktop/src-tauri/src/accounts.rs` and SECURITY.md. Still to do: running sessions on two accounts at once (with "several sessions" above), and connecting the preview's Accounts page and Setup step to the real accounts.
+5. **Accounts (first slice done):** a separate config folder per account, with sign-in, status and sign-out through `claude auth`, and an account picker in the Claude panel. See `apps/desktop/src-tauri/src/accounts.rs` and SECURITY.md. Agentic runs can work on several accounts at once. Still to do: several Editor chat sessions at once, and connecting the preview's Accounts page and Setup step to the real accounts.
 6. **Tripwire and audit log** in `crates/core`.
 7. **Packaging:** bundling, the hook sidecar, signing and release CI.
 8. **Code intelligence (language servers):** type-aware completion, go to definition, hover, rename, live errors and formatting. For Rust this means running `rust-analyzer` as a separate process and talking to it over LSP, which needs Rust backend work.
