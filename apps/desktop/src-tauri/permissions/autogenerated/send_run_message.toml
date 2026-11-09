@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-send-run-message"
+description = "Enables the send_run_message command without any pre-configured scope."
+commands.allow = ["send_run_message"]
+
+[[permission]]
+identifier = "deny-send-run-message"
+description = "Denies the send_run_message command without any pre-configured scope."
+commands.deny = ["send_run_message"]

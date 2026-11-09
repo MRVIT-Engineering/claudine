@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The UI may read the open project, the user's settings, and manage Claude accounts and talk to the Claude session Rust runs, through these commands and nothing else.",
+  "description": "The UI may read the open project, the user's settings, and manage Claude accounts talk to the Claude session Rust runs, and manage Agentic runs, through these commands and nothing else.",
   "windows": ["main"],
   "permissions": [
     "allow-app-version",
@@ -28,6 +28,25 @@
     "allow-sign-in",
     "allow-submit-sign-in-code",
     "allow-cancel-sign-in",
-    "allow-sign-out"
+    "allow-sign-out",
+    "allow-new-run-info",
+    "allow-start-run",
+    "allow-list-runs",
+    "allow-watch-runs",
+    "allow-run-transcript",
+    "allow-send-run-message",
+    "allow-answer-run-permission",
+    "allow-stop-run",
+    "allow-resume-run",
+    "allow-review-run-now",
+    "allow-run-changes",
+    "allow-add-run-comment",
+    "allow-delete-run-comment",
+    "allow-set-run-viewed",
+    "allow-request-run-changes",
+    "allow-gh-status",
+    "allow-approve-run",
+    "allow-discard-run",
+    "allow-open-run-in-editor"
   ]
 }

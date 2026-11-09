@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-new-run-info"
+description = "Enables the new_run_info command without any pre-configured scope."
+commands.allow = ["new_run_info"]
+
+[[permission]]
+identifier = "deny-new-run-info"
+description = "Denies the new_run_info command without any pre-configured scope."
+commands.deny = ["new_run_info"]

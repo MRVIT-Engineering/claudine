@@ -9,7 +9,7 @@ Please don't open a public issue for a vulnerability.
 ## Security invariants
 
 - The webview is untrusted. All security decisions (path checks, approvals, tripwire, audit) live in Rust, never in TypeScript.
-- The app makes no network requests. Only the `claude` process talks to the network.
+- The app makes no network requests. Only the `claude` process talks to the network. The one exception is approving an Agentic run with "Open GitHub PR": then Rust runs the user's own `git push` and `gh pr create`, after a native confirmation (see Agentic runs).
 - Never bundle, download, or install Claude Code. Use the user's own install.
 - No plugin, extension, theme-download or remote-code mechanism, ever.
 - Every new dependency is recorded in `DEPENDENCIES.md` with a reason.
@@ -27,7 +27,7 @@ Please don't open a public issue for a vulnerability.
 - `claude -p` skips Claude Code's own folder-trust prompt, and a project's `.claude/` and `.mcp.json` can run commands as soon as `claude` starts. Rust asks with a native dialog before the first session in each folder, and keeps the answer in `trusted-projects.json` in the app config folder, by canonical path. A missing or broken file trusts nothing.
 - `claude` runs with `--permission-prompt-tool stdio` and `--permission-mode default`, which overrides a "bypass permissions" default in the user's settings. Each permission request is kept in Rust. The webview answers only with a request id and allow or deny, and Rust replies with the tool input it kept, so the webview can't change what runs. Each request can be answered once.
 - Rust refuses any other request from `claude` (hook callbacks, MCP messages), so nothing waits on the webview.
-- **Modes and models** change through `claude`'s control messages, never through CLI arguments. Rust accepts only the modes *default*, *acceptEdits* and *plan*, as a Rust enum. `bypassPermissions` and `auto` aren't offered, because they let `claude` approve tools itself. A model is passed on only if it's in the list `claude` sent for this session.
+- **Modes and models** change through `claude`'s control messages, never through CLI arguments. Rust accepts only the modes *default*, *acceptEdits* and *plan*, as a Rust enum. `bypassPermissions` and `auto` aren't offered in the Editor chat, because they let `claude` approve tools itself. Auto mode is only for Agentic runs, which work in their own worktree (see below). A model is passed on only if it's in the list `claude` sent for this session.
 - In *accept edits* mode, `claude` approves file edits inside the folder without asking Claudine. Commands still ask. The composer shows the mode in amber while it's on.
 - Ending a session, opening another folder or quitting kills the process.
 - **Limits, for now:**
@@ -46,6 +46,22 @@ Please don't open a public issue for a vulnerability.
 - The sign-in code from the browser fallback is passed to `claude` only if it's printable ASCII without spaces, so it can't answer a second prompt.
 - Removing an account runs `claude auth logout` first, so its Keychain entry is deleted, then deletes the folder. If sign-out fails, the account is kept. A folder left behind is never reused for a new account.
 - The default account can't be signed out from Claudine, because that would also sign out the terminal.
+
+## Agentic runs
+
+A run is `claude` working on its own on a new branch, in a git worktree under the app data folder (`worktrees/<id>`), then waiting for the user's review. See `docs/agentic-mode.md`.
+
+- **Where it works.** Rust makes the branch (`<prefix><slug>`, checked with `git check-ref-format`) and the worktree with `git worktree add`, which leaves the main checkout's files and branch alone. Every git command that changes anything runs in the run's worktree or on the run's branch. Discarding deletes only a worktree inside Claudine's own worktrees folder, and only the run's branch.
+- **Permissions.** Runs use `--permission-mode auto` when the installed `claude` lists it, `acceptEdits` plus a short allowlist of build, test and read-only git commands when it doesn't, or `acceptEdits` or `default` when the user picks them. Whatever the mode, Rust passes `ask` rules with `--settings` for `git push`, package installs (npm, pnpm, yarn, bun, pip, uv, cargo, brew, gem, go get), `rm`, `curl`, `wget`, `WebFetch`, `WebSearch` and every command on the user's deny list. These come to Claudine as approval cards, answered the same way as in the Editor chat. Verified with Claude Code 2.1.309: an `ask` rule still asks in auto mode.
+- **No account switching.** A run stays on the account it started on. A usage limit pauses it and says so; nothing moves it to another account. Signing an account out or removing it stops its runs.
+- **Pushing and pull requests.** Nothing is committed, pushed or opened without the user's approval in the review. Approving shows a native dialog from Rust that names the branch and the target. Only then does Rust commit in the worktree, run `git push --set-upstream origin <branch>` and `gh pr create`, with the user's own git and `gh` credentials. Prompts are disabled, so neither can wait for input. A compromised webview can call the command, but can't answer the dialog.
+- **Check commands.** Detected checks (`cargo test`, the project's test script, `pytest`) run as they are, like any command Claude runs in the worktree. Commands typed in Settings could be anything the webview set, so each list runs only after the user confirms it once in a native dialog; the confirmed lists are kept in `runs/approved-checks.json`. Checks run with `sh -c` in the worktree and are killed after 15 minutes.
+- **What's stored.** `runs/runs.json` in the app data folder keeps each run's record, including real paths, which never go to the webview. `runs/<id>/events.jsonl` keeps the conversation as Claudine's own summarized events. Nothing from an account's config folder is read or stored.
+- **What the webview sends.** Run ids, the task, a base branch name (checked against the repository's branches), comments and choices. Never a path, a command or a CLI argument.
+- **Limits:**
+  - A run's worktree is trusted for Editor sessions, since Claudine made it from a trusted project.
+  - Auto mode's own judgment decides everything not covered by an `ask` rule. Deleting files outside the worktree is covered only through `rm`; other ways to delete aren't caught.
+  - Claude's explanation and the PR description are Claude's text, shown and sent as they are.
 
 ## Markdown preview
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-watch-runs"
+description = "Enables the watch_runs command without any pre-configured scope."
+commands.allow = ["watch_runs"]
+
+[[permission]]
+identifier = "deny-watch-runs"
+description = "Denies the watch_runs command without any pre-configured scope."
+commands.deny = ["watch_runs"]

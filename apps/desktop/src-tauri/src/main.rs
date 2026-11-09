@@ -5,7 +5,9 @@ mod accounts;
 mod claude;
 mod error;
 mod files;
+mod git;
 mod project;
+mod runs;
 mod settings;
 mod trust;
 
@@ -34,6 +36,13 @@ fn main() {
             let accounts = app.path().app_config_dir()?.join("accounts.json");
             let folders = app.path().app_data_dir()?.join("accounts");
             app.manage(accounts::AccountsState::load(accounts, folders));
+            let runs = runs::RunsState::load(&app.path().app_data_dir()?);
+            runs.set_app(app.handle().clone());
+            let handle = app.handle().clone();
+            runs.watch_limits(std::sync::Arc::new(move || {
+                handle.state::<settings::SettingsState>().current()
+            }));
+            app.manage(runs);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -62,6 +71,25 @@ fn main() {
             accounts::submit_sign_in_code,
             accounts::cancel_sign_in,
             accounts::sign_out,
+            runs::new_run_info,
+            runs::start_run,
+            runs::list_runs,
+            runs::watch_runs,
+            runs::run_transcript,
+            runs::send_run_message,
+            runs::answer_run_permission,
+            runs::stop_run,
+            runs::resume_run,
+            runs::review_run_now,
+            runs::run_changes,
+            runs::add_run_comment,
+            runs::delete_run_comment,
+            runs::set_run_viewed,
+            runs::request_run_changes,
+            runs::gh_status,
+            runs::approve_run,
+            runs::discard_run,
+            runs::open_run_in_editor,
         ])
         .run(tauri::generate_context!())
         // LEARN: `expect` crashes with this message on `Err`; there's nothing to recover to here.

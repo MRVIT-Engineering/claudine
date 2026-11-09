@@ -49,6 +49,8 @@ const MAX_MODELS: usize = 30;
 pub enum SessionEvent {
     Ready {
         model: String,
+        /// Claude Code's id for the conversation, which `--resume` takes.
+        session_id: String,
     },
     Text {
         text: String,
@@ -79,6 +81,21 @@ pub enum SessionEvent {
         is_error: bool,
         message: Option<String>,
         cost_usd: Option<f64>,
+        /// How many model turns the session has taken so far.
+        num_turns: Option<u64>,
+    },
+    /// Claude's todo list, from its `TodoWrite` tool.
+    Plan {
+        items: Vec<PlanItem>,
+    },
+    /// Claude read a message the user sent, with `--replay-user-messages`.
+    UserEcho {
+        text: String,
+    },
+    /// The account's usage status. `rejected` means it hit a usage limit.
+    RateLimit {
+        status: String,
+        resets_at: Option<u64>,
     },
     /// What `claude` offers, from its answer to `initialize`. Arrives before any message.
     Options {
@@ -102,6 +119,49 @@ pub enum SessionEvent {
         code: Option<i32>,
         stderr: String,
     },
+}
+
+/// One step of Claude's plan.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanItem {
+    pub text: String,
+    /// `pending`, `in_progress` or `completed`, as Claude Code says.
+    pub status: String,
+}
+
+/// Where a session's events go: the Editor chat's channel, or a run's recorder.
+// LEARN: `dyn Fn` is a trait object: any closure with this signature, chosen at runtime.
+pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync>;
+
+/// How to start `claude`, beyond the account and folder.
+pub struct SpawnOptions {
+    /// One of `claude`'s permission modes, chosen by Rust, never by the webview.
+    pub mode: &'static str,
+    /// A Claude Code session id to continue.
+    pub resume: Option<String>,
+    /// Extra settings JSON, for the run's `ask` rules.
+    pub settings: Option<String>,
+    /// Tools allowed without asking, for versions without auto mode.
+    pub allowed_tools: Vec<String>,
+    /// Echo each user message when Claude reads it, for queued mid-run messages.
+    pub replay: bool,
+    /// Added to Claude Code's system prompt, to tell a run where it works.
+    pub append_prompt: Option<String>,
+}
+
+impl SpawnOptions {
+    /// The Editor chat: the default mode, nothing extra.
+    fn editor() -> SpawnOptions {
+        SpawnOptions {
+            mode: "default",
+            resume: None,
+            settings: None,
+            allowed_tools: Vec::new(),
+            replay: false,
+            append_prompt: None,
+        }
+    }
 }
 
 /// One entry of `claude`'s model list. `value` is what `set_model` takes.
@@ -143,12 +203,48 @@ struct Handles {
     models: Arc<Mutex<Vec<String>>>,
 }
 
-struct Session {
+pub struct Session {
     /// The account it runs on, so signing that account out can stop it.
     account: String,
     child: Arc<Mutex<Child>>,
     handles: Handles,
     next_request: AtomicU64,
+}
+
+impl Session {
+    /// Sends a user message. Claude reads it at its next step if it's busy.
+    pub fn send_user(&self, text: &str) -> Result<(), CommandError> {
+        if text.len() > MAX_MESSAGE_BYTES {
+            return Err(CommandError::TooLarge);
+        }
+        write_line(
+            &self.handles.stdin,
+            &json!({ "type": "user", "message": { "role": "user", "content": text } }),
+        )
+    }
+
+    /// Answers one permission request with the input Rust kept.
+    pub fn answer(&self, id: &str, allow: bool) -> Result<(), CommandError> {
+        answer(&self.handles, id, allow)
+    }
+
+    /// Sends Claudine's own control request. `kind` goes in the id, to match the answer.
+    pub fn control(&self, kind: &str, request: Value) -> Result<(), CommandError> {
+        let number = self.next_request.fetch_add(1, Ordering::Relaxed);
+        write_line(
+            &self.handles.stdin,
+            &json!({
+                "type": "control_request",
+                "request_id": format!("claudine-{kind}-{number}"),
+                "request": request
+            }),
+        )
+    }
+
+    /// Stops the current turn, like Esc in the terminal. The process keeps running.
+    pub fn interrupt(&self) -> Result<(), CommandError> {
+        self.control("interrupt", json!({ "subtype": "interrupt" }))
+    }
 }
 
 impl Drop for Session {
@@ -237,29 +333,45 @@ pub fn spawn_error(error: io::Error) -> CommandError {
 }
 
 /// `config_dir` is the account's config folder, or `None` for the default account.
-fn spawn_session(
+pub fn spawn_session(
     claude: &Path,
     folder: &Path,
     account: &str,
     config_dir: Option<&Path>,
-    on_event: Channel<SessionEvent>,
+    options: &SpawnOptions,
+    on_event: EventSink,
 ) -> Result<Session, CommandError> {
     // LEARN: `Command` is `child_process.spawn`; `Stdio::piped()` hands us each stream.
     let mut command = Command::new(claude);
+    command.args([
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-prompt-tool",
+        "stdio",
+        // Explicit, so a "bypass permissions" default in the user's settings doesn't apply.
+        "--permission-mode",
+        options.mode,
+    ]);
+    if let Some(id) = &options.resume {
+        command.args(["--resume", id]);
+    }
+    if let Some(settings) = &options.settings {
+        command.args(["--settings", settings]);
+    }
+    if !options.allowed_tools.is_empty() {
+        command.arg("--allowed-tools").args(&options.allowed_tools);
+    }
+    if options.replay {
+        command.arg("--replay-user-messages");
+    }
+    if let Some(prompt) = &options.append_prompt {
+        command.args(["--append-system-prompt", prompt]);
+    }
     command
-        .args([
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--permission-prompt-tool",
-            "stdio",
-            // Explicit, so a "bypass permissions" default in the user's settings doesn't apply.
-            "--permission-mode",
-            "default",
-        ])
         .current_dir(folder)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -296,7 +408,7 @@ fn spawn_session(
         relay.run(stdout);
         let code = wait_for_exit(&reader_child);
         let stderr = stderr_tail.lock().map(|t| t.clone()).unwrap_or_default();
-        let _ = relay.on_event.send(SessionEvent::Exited { code, stderr });
+        (relay.on_event)(SessionEvent::Exited { code, stderr });
     });
 
     write_line(
@@ -370,7 +482,7 @@ fn write_line(stdin: &Mutex<ChildStdin>, message: &Value) -> Result<(), CommandE
 struct Relay {
     handles: Handles,
     root: PathBuf,
-    on_event: Channel<SessionEvent>,
+    on_event: EventSink,
 }
 
 impl Relay {
@@ -382,8 +494,7 @@ impl Relay {
                 continue;
             };
             for event in self.handle(&message) {
-                // Fails only if the webview is gone; there's no one left to tell.
-                let _ = self.on_event.send(event);
+                (self.on_event)(event);
             }
         }
     }
@@ -504,7 +615,17 @@ fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
     match message["type"].as_str() {
         Some("system") if message["subtype"] == "init" => {
             let model = message["model"].as_str().unwrap_or("").to_string();
-            events.push(SessionEvent::Ready { model });
+            let session_id = message["session_id"].as_str().unwrap_or("").to_string();
+            events.push(SessionEvent::Ready { model, session_id });
+        }
+        Some("rate_limit_event") => {
+            let info = &message["rate_limit_info"];
+            if let Some(status) = info["status"].as_str() {
+                events.push(SessionEvent::RateLimit {
+                    status: shorten(status.to_string()),
+                    resets_at: info["resetsAt"].as_u64(),
+                });
+            }
         }
         Some("system") if message["subtype"] == "status" => {
             if let Some(mode) = message["permissionMode"].as_str() {
@@ -524,6 +645,11 @@ fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
                     }
                     Some("tool_use") => {
                         let name = block["name"].as_str().unwrap_or("").to_string();
+                        if name == "TodoWrite" {
+                            events.push(SessionEvent::Plan {
+                                items: plan_items(&block["input"]),
+                            });
+                        }
                         let described = describe(&name, &block["input"], root);
                         events.push(SessionEvent::Tool {
                             id: block["id"].as_str().unwrap_or("").to_string(),
@@ -537,7 +663,19 @@ fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
             }
         }
         Some("user") => {
+            // A message the user sent, echoed back when Claude read it.
+            if let Some(text) = message["message"]["content"].as_str() {
+                events.push(SessionEvent::UserEcho {
+                    text: shorten(text.to_string()),
+                });
+            }
             for block in blocks(message) {
+                if block["type"] == "text" {
+                    let text = block["text"].as_str().unwrap_or("").to_string();
+                    events.push(SessionEvent::UserEcho {
+                        text: shorten(text),
+                    });
+                }
                 if block["type"] == "tool_result" {
                     events.push(SessionEvent::ToolResult {
                         id: block["tool_use_id"].as_str().unwrap_or("").to_string(),
@@ -560,11 +698,30 @@ fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
                 is_error,
                 message: message_text,
                 cost_usd: message["total_cost_usd"].as_f64(),
+                num_turns: message["num_turns"].as_u64(),
             });
         }
         _ => {}
     }
     events
+}
+
+/// Claude's todo list from a `TodoWrite` input, at most 50 steps.
+fn plan_items(input: &Value) -> Vec<PlanItem> {
+    let Some(todos) = input["todos"].as_array() else {
+        return Vec::new();
+    };
+    todos
+        .iter()
+        .filter_map(|todo| {
+            let text = todo["content"].as_str()?;
+            Some(PlanItem {
+                text: shorten(text.to_string()),
+                status: todo["status"].as_str().unwrap_or("pending").to_string(),
+            })
+        })
+        .take(50)
+        .collect()
 }
 
 /// The content blocks of an `assistant` or `user` message. A plain string has none.
@@ -665,6 +822,23 @@ fn shorten(text: String) -> String {
     }
 }
 
+/// Whether this `claude` has auto mode, from the choices its help lists.
+pub fn supports_auto_mode(claude: &Path) -> bool {
+    let Ok(output) = Command::new(claude)
+        .arg("--help")
+        .env_remove("CLAUDECODE")
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    let help = String::from_utf8_lossy(&output.stdout);
+    help.split("--permission-mode")
+        .nth(1)
+        .and_then(|rest| rest.split("--").next())
+        .is_some_and(|choices| choices.contains("\"auto\""))
+}
+
 #[derive(Serialize)]
 pub struct ClaudeStatus {
     found: bool,
@@ -692,11 +866,39 @@ pub fn start_session(
     account: String,
     on_event: Channel<SessionEvent>,
 ) -> Result<(), CommandError> {
-    let (name, folder) = projects.name_and_path()?;
     // Looked up by id: the webview never names a config folder.
     let config_dir = accounts.config_dir(&account)?;
     let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
+    let folder = ensure_trusted(&app, &projects, &trust, "Trust and Start")?;
 
+    // Fails only if the webview is gone; there's no one left to tell.
+    let sink: EventSink = Arc::new(move |event| {
+        let _ = on_event.send(event);
+    });
+    let session = spawn_session(
+        &claude,
+        &folder,
+        &account,
+        config_dir.as_deref(),
+        &SpawnOptions::editor(),
+        sink,
+    )?;
+    accounts.set_last_used(&account);
+    let mut current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    // Replacing the old session drops it, which stops its process.
+    *current = Some(session);
+    Ok(())
+}
+
+/// The open project's folder, once the user trusts it. The first time for each folder,
+/// Rust asks with a native dialog the webview can't answer.
+pub fn ensure_trusted(
+    app: &AppHandle,
+    projects: &ProjectState,
+    trust: &TrustState,
+    button: &str,
+) -> Result<PathBuf, CommandError> {
+    let (name, folder) = projects.name_and_path()?;
     if !trust.is_trusted(&folder) {
         let message = format!(
             "Claude Code will run in:\n{}\n\nA project can include settings, hooks and MCP \
@@ -710,7 +912,7 @@ pub fn start_session(
             .title(format!("Trust “{name}”?"))
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "Trust and Start".to_string(),
+                button.to_string(),
                 "Cancel".to_string(),
             ))
             .blocking_show();
@@ -723,13 +925,7 @@ pub fn start_session(
         }
         trust.trust(&folder)?;
     }
-
-    let session = spawn_session(&claude, &folder, &account, config_dir.as_deref(), on_event)?;
-    accounts.set_last_used(&account);
-    let mut current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
-    // Replacing the old session drops it, which stops its process.
-    *current = Some(session);
-    Ok(())
+    Ok(folder)
 }
 
 #[tauri::command(async)]
@@ -779,20 +975,11 @@ fn answer(handles: &Handles, id: &str, allow: bool) -> Result<(), CommandError> 
 
 /// Sends Claudine's own control request. `kind` goes in the id, to match the answer.
 fn send_control(sessions: &SessionState, kind: &str, request: Value) -> Result<(), CommandError> {
-    let number = {
-        let current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
-        let session = current.as_ref().ok_or(CommandError::NoSession)?;
-        session.next_request.fetch_add(1, Ordering::Relaxed)
-    };
-    let handles = sessions.handles()?;
-    write_line(
-        &handles.stdin,
-        &json!({
-            "type": "control_request",
-            "request_id": format!("claudine-{kind}-{number}"),
-            "request": request
-        }),
-    )
+    let current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    current
+        .as_ref()
+        .ok_or(CommandError::NoSession)?
+        .control(kind, request)
 }
 
 /// Stops the current turn, like pressing Esc in the terminal. The session stays open.
@@ -843,7 +1030,6 @@ pub fn stop_session(sessions: State<'_, SessionState>) {
 mod tests {
     use super::*;
     use std::time::Instant;
-    use tauri::ipc::InvokeResponseBody;
 
     /// A stand-in for `claude`: asks to write a file, then saves the answer it gets.
     const FAKE_CLAUDE: &str = r#"#!/bin/sh
@@ -866,14 +1052,15 @@ printf '%s\n' "$answer" > answer.json
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let events = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&events);
-        let channel = Channel::new(move |body: InvokeResponseBody| {
-            if let InvokeResponseBody::Json(json) = body {
-                sink.lock().unwrap().push(json);
-            }
-            Ok(())
+        let recorded = Arc::clone(&events);
+        let sink: EventSink = Arc::new(move |event| {
+            recorded
+                .lock()
+                .unwrap()
+                .push(serde_json::to_string(&event).unwrap());
         });
-        let session = spawn_session(&fake, &folder, "default", None, channel).unwrap();
+        let options = SpawnOptions::editor();
+        let session = spawn_session(&fake, &folder, "default", None, &options, sink).unwrap();
         (session, folder, events)
     }
 
@@ -1088,6 +1275,7 @@ printf '%s\n' "$answer" > answer.json
                 is_error: false,
                 message: None,
                 cost_usd: Some(0.0027),
+                num_turns: None,
             }]
         );
     }
@@ -1108,7 +1296,7 @@ printf '%s\n' "$answer" > answer.json
                 models: Arc::new(Mutex::new(Vec::new())),
             },
             root: root(),
-            on_event: Channel::new(|_| Ok(())),
+            on_event: Arc::new(|_| {}),
         };
         (relay, child)
     }
@@ -1214,5 +1402,61 @@ printf '%s\n' "$answer" > answer.json
         ] {
             assert!(events_for(&message, &root()).is_empty());
         }
+    }
+
+    #[test]
+    fn plans_echoes_and_usage_limits_are_relayed() {
+        let todo = json!({ "type": "assistant", "message": { "content": [{
+            "type": "tool_use", "id": "t1", "name": "TodoWrite",
+            "input": { "todos": [
+                { "content": "Read pool.rs", "status": "completed", "activeForm": "Reading" },
+                { "content": "Add a lock", "status": "in_progress", "activeForm": "Adding" }
+            ] }
+        }] } });
+        let events = events_for(&todo, &root());
+        assert_eq!(
+            events[0],
+            SessionEvent::Plan {
+                items: vec![
+                    PlanItem {
+                        text: "Read pool.rs".to_string(),
+                        status: "completed".to_string()
+                    },
+                    PlanItem {
+                        text: "Add a lock".to_string(),
+                        status: "in_progress".to_string()
+                    },
+                ]
+            }
+        );
+
+        let echo =
+            json!({ "type": "user", "message": { "role": "user", "content": "Also add tests" } });
+        assert_eq!(
+            events_for(&echo, &root()),
+            vec![SessionEvent::UserEcho {
+                text: "Also add tests".to_string()
+            }]
+        );
+
+        let limit = json!({ "type": "rate_limit_event",
+            "rate_limit_info": { "status": "rejected", "resetsAt": 1794271800u64 } });
+        assert_eq!(
+            events_for(&limit, &root()),
+            vec![SessionEvent::RateLimit {
+                status: "rejected".to_string(),
+                resets_at: Some(1794271800)
+            }]
+        );
+
+        let init =
+            json!({ "type": "system", "subtype": "init", "model": "m", "session_id": "abc" });
+        assert_eq!(
+            events_for(&init, &root()),
+            vec![SessionEvent::Ready {
+                model: "m".to_string(),
+                session_id: "abc".to_string()
+            }]
+        );
     }
 }

@@ -6,7 +6,7 @@ use crate::files::{self, DirEntry, FileList};
 use crate::settings::SettingsState;
 use my_editor_core::path_guard::ProjectRoot;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -82,20 +82,33 @@ pub fn open_project(
 
     // Resolves symlinks and `..`, so the trust list has one spelling per folder.
     let path = path.canonicalize()?;
-    let root = ProjectRoot::open(&path)?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("/"));
-    let project = Project { root, name, path };
-    let opened = info(&project);
+    state.open_folder(&path, name, &sessions).map(Some)
+}
 
-    let mut current = state.0.lock().map_err(|_| CommandError::Internal)?;
-    // `*` writes through the lock guard into the value it protects.
-    *current = Some(project);
-    // A session keeps running in the folder it started in, so end it with the project.
-    sessions.stop();
-    Ok(Some(opened))
+impl ProjectState {
+    /// Makes `path` the open project. Only for folders Rust chose: the native picker's
+    /// answer, or a run's own worktree.
+    pub fn open_folder(
+        &self,
+        path: &Path,
+        name: String,
+        sessions: &SessionState,
+    ) -> Result<ProjectInfo, CommandError> {
+        let path = path.canonicalize()?;
+        let root = ProjectRoot::open(&path)?;
+        let project = Project { root, name, path };
+        let opened = info(&project);
+        let mut current = self.0.lock().map_err(|_| CommandError::Internal)?;
+        // `*` writes through the lock guard into the value it protects.
+        *current = Some(project);
+        // A session keeps running in the folder it started in, so end it with the project.
+        sessions.stop();
+        Ok(opened)
+    }
 }
 
 #[tauri::command(async)]

@@ -48,6 +48,8 @@ Mode: explain
 | The `'_` lifetime | introduced | apps/desktop/src-tauri/src/accounts.rs | `MutexGuard<'_, T>` borrows from `self`, so it can't outlive it |
 | Extension traits (`DirBuilderExt`) | introduced | apps/desktop/src-tauri/src/accounts.rs | Unix-only methods such as `mode`, once the trait is in scope |
 | `Box<dyn Error>` | introduced | apps/desktop/src-tauri/src/main.rs | Any error type behind a pointer, so `?` works in `setup` |
+| Trait objects (`Arc<dyn Fn>`) | introduced | apps/desktop/src-tauri/src/claude.rs | A callback type chosen at runtime, like `(event) => void`; `Send + Sync` lets threads share it |
+| `matches!` | introduced | apps/desktop/src-tauri/src/runs.rs | `match` that answers yes or no; used for the run state transition table |
 
 ## Exercises
 | Exercise | File | Status |
@@ -62,3 +64,4 @@ Mode: explain
 - **2026-11-06, settings stored by Rust (explain mode):** Claude wrote `settings.rs` and wired the hidden names into `files.rs`. Introduced 5 concepts across 3 changes. No compiler errors. Still owed: the `'_` lifetime.
 - **2026-11-08, Claude sessions (explain mode):** Claude wrote `claude.rs` and `trust.rs`: running the user's `claude` with stream-json, Rust-side permission answers, and a per-folder trust prompt. Introduced 3 concepts; reused threads, `Arc`, `Mutex` and `Drop`. Clippy and the compiler passed first time. Tests include a fake `claude` shell script. Still owed: the `'_` lifetime.
 - **2026-11-09, Claude accounts, modes and models (explain mode):** Claude wrote `accounts.rs` (config folder per account, `claude auth` login, status and logout) and mode and model switching in `claude.rs`. Introduced 2 concepts and paid the owed `'_` lifetime. Clippy caught a test helper that never reaped its child process (`zombie_processes`). A real run showed that old `claude` versions read `auth status` as a prompt, so Rust now checks `claude auth --help` first.
+- **2026-11-09, Agentic mode (explain mode):** Claude wrote `git.rs` (worktrees, snapshots through a temporary index, diff parsing) and `runs.rs` (run states, finishing, review actions), and made `claude.rs`'s relay send to any sink. Introduced trait objects and `matches!`. One bug caught while testing: a stopped process's late "exited" event could remove its replacement, fixed with a generation number per launch. 21 new tests, including an end-to-end run against a fake `claude`, and one opt-in test against the real one.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-run-in-editor"
+description = "Enables the open_run_in_editor command without any pre-configured scope."
+commands.allow = ["open_run_in_editor"]
+
+[[permission]]
+identifier = "deny-open-run-in-editor"
+description = "Denies the open_run_in_editor command without any pre-configured scope."
+commands.deny = ["open_run_in_editor"]

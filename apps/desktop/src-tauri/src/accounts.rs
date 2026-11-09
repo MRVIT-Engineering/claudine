@@ -10,6 +10,7 @@
 
 use crate::claude::{SessionState, find_claude, keep_tail, spawn_error, wait_for_exit};
 use crate::error::CommandError;
+use crate::runs::RunsState;
 use crate::settings::write_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -477,6 +478,7 @@ pub fn update_account(
 pub fn remove_account(
     accounts: State<'_, AccountsState>,
     sessions: State<'_, SessionState>,
+    runs: State<'_, RunsState>,
     account: String,
 ) -> Result<(), CommandError> {
     let config_dir = accounts
@@ -484,6 +486,7 @@ pub fn remove_account(
         .ok_or(CommandError::InvalidInput)?;
     let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
     sessions.stop_account(&account);
+    runs.stop_account(&account);
     accounts.cancel_sign_in(Some(&account));
     let output = accounts.run_auth(&claude, Some(&config_dir), &["logout"])?;
     if !output.status.success() {
@@ -627,6 +630,7 @@ pub fn cancel_sign_in(accounts: State<'_, AccountsState>) {
 pub fn sign_out(
     accounts: State<'_, AccountsState>,
     sessions: State<'_, SessionState>,
+    runs: State<'_, RunsState>,
     account: String,
 ) -> Result<(), CommandError> {
     let config_dir = accounts
@@ -634,6 +638,7 @@ pub fn sign_out(
         .ok_or(CommandError::InvalidInput)?;
     let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
     sessions.stop_account(&account);
+    runs.stop_account(&account);
     let output = accounts.run_auth(&claude, Some(&config_dir), &["logout"])?;
     if output.status.success() {
         Ok(())

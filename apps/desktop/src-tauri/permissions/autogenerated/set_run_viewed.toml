@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-run-viewed"
+description = "Enables the set_run_viewed command without any pre-configured scope."
+commands.allow = ["set_run_viewed"]
+
+[[permission]]
+identifier = "deny-set-run-viewed"
+description = "Denies the set_run_viewed command without any pre-configured scope."
+commands.deny = ["set_run_viewed"]

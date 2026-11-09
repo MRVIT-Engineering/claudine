@@ -43,6 +43,20 @@ pub enum CommandError {
     TooManyAccounts,
     /// `claude auth logout` failed, so the account was kept.
     SignOutFailed,
+    /// `git` isn't installed where Claudine can find it.
+    GitNotFound,
+    /// The open folder isn't inside a git repository, so runs can't make branches.
+    NotARepository,
+    /// A git or gh command failed. `detail` is its last error line, home shortened to `~`.
+    Git {
+        detail: String,
+    },
+    /// `gh` isn't installed, or isn't signed in, so no pull request can be opened.
+    GhUnavailable,
+    /// The run is in a state where this can't be done, such as approving while it runs.
+    WrongState,
+    /// The user cancelled a native confirmation dialog.
+    Cancelled,
 }
 
 // LEARN: a `From` impl is what lets `?` turn a `GuardError` into a `CommandError` by itself.
