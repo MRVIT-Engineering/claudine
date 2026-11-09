@@ -19,6 +19,17 @@ fn main() {
         "answer_permission",
         "interrupt_session",
         "stop_session",
+        "set_mode",
+        "set_model",
+        "list_accounts",
+        "add_account",
+        "update_account",
+        "remove_account",
+        "account_status",
+        "sign_in",
+        "submit_sign_in_code",
+        "cancel_sign_in",
+        "sign_out",
     ]);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);
     tauri_build::try_build(attributes).expect("tauri-build failed");

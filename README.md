@@ -17,8 +17,10 @@ The packages still use the placeholder name `my-editor`.
 ## What it does today
 
 - **Open a folder and browse it.** ⌘O opens any folder; the file tree, ⌘⇧O (go to file) and ⌘⇧F (search the project) all work on real files.
-- **Read and edit code.** A CodeMirror 6 editor with VS Code-style shortcuts, find and replace, folding, and syntax highlighting for 140+ languages. Edits stay in memory for now, because saving isn't built yet.
-- **Talk to Claude Code.** The Claude panel starts your own `claude` install in the open folder. Each file write, edit or command shows up as a request with the content or diff, and runs only after you click Allow.
+- **Read and edit code.** A CodeMirror 6 editor with VS Code-style shortcuts, find and replace, folding, syntax highlighting for 140+ languages, and file icons per language and tool. Edits stay in memory for now, because saving isn't built yet.
+- **Talk to Claude Code.** The Claude panel starts your own `claude` install in the open folder. Each file write, edit or command shows up as a request with the content or diff, and runs only after you click Allow. Switch between asking, accepting edits and plan mode (Shift+Tab), and pick the model, from the composer.
+- **Several Claude accounts.** Add accounts in Settings, each with its own Claude Code login, and pick one when you start a session. Sign-in is Claude Code's own; Claudine never sees a token.
+- **Preview Markdown.** Turn on Preview above a `.md` file (⇧⌘V) to see it rendered in the same tab.
 - **Settings that stick.** Theme, accent, fonts, editor options, hidden files and panel widths are saved per user.
 
 The session, Parallel and Accounts screens from the design are still a preview on mock data, hidden behind `PREVIEW_CLAUDE` in `apps/desktop/src/lib/flags.ts`. See [the development plan](docs/DEVELOPMENT_PLAN.md) for what comes next.

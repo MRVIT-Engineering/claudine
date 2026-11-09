@@ -18,6 +18,7 @@ import {
 } from "solid-js";
 import { activeEditor } from "../lib/activeEditor";
 import { PREVIEW_CLAUDE } from "../lib/flags";
+import { isMarkdown, toggleMarkdownPreview } from "../state/markdown";
 import {
   accountOf,
   letterOf,
@@ -28,11 +29,13 @@ import {
   setDialog,
   showSidebar,
   state,
+  stepFontSize,
   updateSettings,
 } from "../state/store";
 import { focusProjectSearch } from "../views/SearchPanel";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { openFindInActive, openReplacePanel } from "./FindPanel";
-import { FileIcon, SearchIcon } from "./Icons";
+import { SearchIcon } from "./Icons";
 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const MOD = IS_MAC ? "⌘" : "Ctrl+";
@@ -109,6 +112,11 @@ const COMMANDS: Command[] = [
   },
   { label: "Find", keys: `${MOD}F`, run: () => openFindInActive() },
   {
+    label: "Toggle Markdown Preview",
+    keys: IS_MAC ? "⇧⌘V" : "Ctrl+Shift+V",
+    run: toggleMarkdownPreview,
+  },
+  {
     label: "Replace",
     keys: `${MOD}${ALT}F`,
     needsEditor: true,
@@ -167,6 +175,9 @@ const COMMANDS: Command[] = [
         diffLayout: state.settings.diffLayout === "side" ? "inline" : "side",
       }),
   },
+  { label: "Increase Font Size", keys: `${MOD}+`, run: () => stepFontSize(1) },
+  { label: "Decrease Font Size", keys: `${MOD}-`, run: () => stepFontSize(-1) },
+  { label: "Reset Font Size", keys: `${MOD}0`, run: () => stepFontSize(0) },
   {
     label: "Toggle Light / Dark Theme",
     run: () =>
@@ -419,7 +430,7 @@ function Palette(props: { initial: string; onClose: () => void }) {
               >
                 <Show when={mode() === "files"}>
                   <span class="tree-file">
-                    <FileIcon size={13} />
+                    <FileTypeIcon name={item.title ?? ""} size={14} />
                   </span>
                 </Show>
                 <span class="palette-label">{item.label}</span>
@@ -496,11 +507,26 @@ export function CommandPalette() {
     else if (plain && event.shiftKey && key === "p")
       run = () => openPalette(">");
     else if (plain && event.shiftKey && key === "f") run = searchAllFiles;
+    else if (
+      plain &&
+      event.shiftKey &&
+      key === "v" &&
+      state.view === "editor" &&
+      state.activeTab &&
+      isMarkdown(state.activeTab)
+    )
+      run = toggleMarkdownPreview;
     else if (plain && event.shiftKey && key === "e") {
       run = () => {
         navigate("editor");
         showSidebar("explorer");
       };
+    } else if (plain && (key === "=" || key === "+")) {
+      run = () => stepFontSize(1);
+    } else if (plain && (key === "-" || key === "_")) {
+      run = () => stepFontSize(-1);
+    } else if (plain && !event.shiftKey && key === "0") {
+      run = () => stepFontSize(0);
     } else if (
       event.ctrlKey &&
       !event.metaKey &&

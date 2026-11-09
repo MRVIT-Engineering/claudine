@@ -32,10 +32,17 @@ pub enum CommandError {
     Internal,
     /// Claude Code isn't installed in any of the usual places.
     ClaudeNotFound,
+    /// This Claude Code has no `claude auth` command, so accounts can't be managed.
+    ClaudeTooOld,
     /// The user didn't trust the folder, so `claude` wasn't started.
     NotTrusted,
-    /// No session is running, or its process has exited.
+    /// No session or sign-in is running, or its process has exited.
     NoSession,
+    /// A label, code or account id the command can't use.
+    InvalidInput,
+    TooManyAccounts,
+    /// `claude auth logout` failed, so the account was kept.
+    SignOutFailed,
 }
 
 // LEARN: a `From` impl is what lets `?` turn a `GuardError` into a `CommandError` by itself.

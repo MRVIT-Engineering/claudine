@@ -522,6 +522,18 @@ export function updateSettings(patch: Partial<Settings>) {
   setState("settings", patch);
 }
 
+/** Cmd+= and Cmd+-: one pixel at a time, within the limits. 0 resets to the default. */
+export function stepFontSize(step: number) {
+  const size =
+    step === 0
+      ? DEFAULT_SETTINGS.fontSize
+      : Math.min(
+          MAX_FONT_SIZE,
+          Math.max(MIN_FONT_SIZE, state.settings.fontSize + step),
+        );
+  if (size !== state.settings.fontSize) updateSettings({ fontSize: size });
+}
+
 export function updatePreview(patch: Partial<PreviewSettings>) {
   setState("preview", patch);
 }

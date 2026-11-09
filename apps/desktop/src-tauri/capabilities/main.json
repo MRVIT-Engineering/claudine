@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The UI may read the open project, the user's settings, and talk to the Claude session Rust runs, through these commands and nothing else.",
+  "description": "The UI may read the open project, the user's settings, and manage Claude accounts and talk to the Claude session Rust runs, through these commands and nothing else.",
   "windows": ["main"],
   "permissions": [
     "allow-app-version",
@@ -17,6 +17,17 @@
     "allow-send-message",
     "allow-answer-permission",
     "allow-interrupt-session",
-    "allow-stop-session"
+    "allow-stop-session",
+    "allow-set-mode",
+    "allow-set-model",
+    "allow-list-accounts",
+    "allow-add-account",
+    "allow-update-account",
+    "allow-remove-account",
+    "allow-account-status",
+    "allow-sign-in",
+    "allow-submit-sign-in-code",
+    "allow-cancel-sign-in",
+    "allow-sign-out"
   ]
 }

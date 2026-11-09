@@ -6,8 +6,11 @@ import {
   type CommandError,
   describeError,
   isCommandError,
+  type ModelOption,
+  type PermissionMode,
   type SessionEvent,
 } from "../backend";
+import { accounts } from "./accounts";
 import { filesChangedOnDisk } from "./store";
 
 export type ChatEntry =
@@ -39,7 +42,16 @@ interface ClaudeState {
   /** Whether Rust found a `claude` install; `null` until asked. */
   found: boolean | null;
   status: ClaudeStatus;
+  /** The account the current or last session runs on. */
+  account: string;
+  /** The full model id, such as `claude-sonnet-5-5`, once `claude` says it. */
   model: string;
+  /** What `claude` offers this session; empty for versions that don't say. */
+  models: ModelOption[];
+  /** The model value picked in Claudine, such as "sonnet". */
+  modelChoice: string;
+  /** `claude`'s permission mode, which can also change by itself (leaving plan mode). */
+  mode: string;
   entries: ChatEntry[];
   permissions: PermissionRequest[];
   costUsd: number | null;
@@ -49,7 +61,11 @@ const [claude, setClaude] = createStore<ClaudeState>({
   open: true,
   found: null,
   status: "off",
+  account: "",
   model: "",
+  models: [],
+  modelChoice: "default",
+  mode: "default",
   entries: [],
   permissions: [],
   costUsd: null,
@@ -102,6 +118,9 @@ export function resetClaude() {
     produce((s) => {
       s.status = "off";
       s.model = "";
+      s.models = [];
+      s.modelChoice = "default";
+      s.mode = "default";
       s.entries = [];
       s.permissions = [];
       s.costUsd = null;
@@ -111,18 +130,23 @@ export function resetClaude() {
 
 export async function startClaude() {
   const mine = ++generation;
+  const account = accounts.selected;
   stopping = false;
   setClaude(
     produce((s) => {
       s.status = "starting";
+      s.account = account;
       s.model = "";
+      s.models = [];
+      s.modelChoice = "default";
+      s.mode = "default";
       s.entries = [];
       s.permissions = [];
       s.costUsd = null;
     }),
   );
   try {
-    await backend.startSession((event) => {
+    await backend.startSession(account, (event) => {
       if (mine === generation) onEvent(event);
     });
     if (mine === generation) setClaude("status", "idle");
@@ -165,6 +189,51 @@ export async function answerPermission(id: string, allow: boolean) {
   }
 }
 
+/** The modes in the order Shift+Tab cycles through them, like the terminal. */
+export const MODES: { value: PermissionMode; label: string; hint: string }[] = [
+  {
+    value: "default",
+    label: "Ask before edits",
+    hint: "Every edit and command waits for your Allow.",
+  },
+  {
+    value: "acceptEdits",
+    label: "Accept edits",
+    hint: "Claude Code edits files in this folder without asking. Commands still ask.",
+  },
+  {
+    value: "plan",
+    label: "Plan",
+    hint: "Claude explores and proposes a plan, without changing anything.",
+  },
+];
+
+export async function setMode(mode: PermissionMode) {
+  try {
+    await backend.setMode(mode);
+    // Shown when `claude` confirms, through its status message.
+  } catch (error) {
+    notice(messageFor(error), "error");
+  }
+}
+
+export function cycleMode() {
+  const index = MODES.findIndex((m) => m.value === claude.mode);
+  const next = MODES[(index + 1) % MODES.length];
+  if (next) void setMode(next.value);
+}
+
+export async function setModel(value: string) {
+  const previous = claude.modelChoice;
+  setClaude("modelChoice", value);
+  try {
+    await backend.setModel(value);
+  } catch (error) {
+    setClaude("modelChoice", previous);
+    notice(messageFor(error), "error");
+  }
+}
+
 export async function interruptClaude() {
   try {
     await backend.interruptSession();
@@ -193,6 +262,23 @@ function onEvent(event: SessionEvent) {
   switch (event.kind) {
     case "ready":
       setClaude("model", event.model);
+      return;
+    case "options":
+      setClaude(
+        produce((s) => {
+          s.models = event.models;
+          s.mode = event.mode;
+        }),
+      );
+      return;
+    case "mode":
+      setClaude("mode", event.mode);
+      return;
+    case "model":
+      setClaude("model", event.model);
+      return;
+    case "notice":
+      notice(`Claude Code: ${event.message}`, "error");
       return;
     case "text":
       setClaude("entries", (e) => [...e, { kind: "text", text: event.text }]);

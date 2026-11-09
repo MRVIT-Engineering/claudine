@@ -26,6 +26,7 @@ import {
 import { createEffect, onCleanup, onMount } from "solid-js";
 import { setActiveEditor } from "../lib/activeEditor";
 import { buffers } from "../lib/buffers";
+import { changeGutter } from "../lib/changeGutter";
 import {
   createEditorRoot,
   languageFor,
@@ -98,6 +99,8 @@ function createState(path: string, text: string) {
     doc: text,
     extensions: [
       sharedExtensions,
+      // First, so the change bar is the leftmost gutter.
+      changeGutter(text),
       language.of(languageFor(path)),
       preferences.of(preferenceExtensions(appState.settings)),
       history(),

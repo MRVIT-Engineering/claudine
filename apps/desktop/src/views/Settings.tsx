@@ -25,6 +25,7 @@ import { MergeReview } from "../components/MergeReview";
 import { Resizer } from "../components/Resizer";
 import { PREVIEW_CLAUDE } from "../lib/flags";
 import { SETTINGS_PREVIEW } from "../lib/samples";
+import { accounts } from "../state/accounts";
 import {
   ACCENTS,
   DEFAULT_SETTINGS,
@@ -45,7 +46,8 @@ import {
   WIDTHS,
 } from "../state/store";
 import type { Settings, SettingsSection } from "../types";
-import { AccountList, SessionDefaults } from "./Accounts";
+import { SessionDefaults } from "./Accounts";
+import { ClaudeAccountsSection } from "./ClaudeAccounts";
 
 const ALL_SECTIONS: {
   key: SettingsSection;
@@ -60,7 +62,6 @@ const ALL_SECTIONS: {
     key: "accounts",
     label: "Claude accounts",
     icon: () => <UsersIcon />,
-    preview: true,
   },
   {
     key: "sessions",
@@ -71,7 +72,7 @@ const ALL_SECTIONS: {
   { key: "about", label: "About", icon: () => <Mascot size={15} /> },
 ];
 
-// Accounts and session defaults belong to the hidden design preview.
+// Session defaults belong to the hidden design preview.
 const SECTIONS = ALL_SECTIONS.filter(
   (section) => PREVIEW_CLAUDE || !section.preview,
 );
@@ -584,25 +585,6 @@ function AboutSection() {
   );
 }
 
-function AccountsSection() {
-  return (
-    <>
-      <SectionHead
-        title="Claude accounts"
-        text="Each account has its own Claude Code config folder."
-      />
-      <AccountList />
-      <button
-        type="button"
-        class="btn btn-lg reset-btn"
-        onClick={() => navigate("accounts")}
-      >
-        <PlusIcon /> Link account
-      </button>
-    </>
-  );
-}
-
 function SessionsSection() {
   return (
     <>
@@ -644,7 +626,7 @@ export function SettingsView() {
                   <span>{section.label}</span>
                   <Show when={section.key === "accounts"}>
                     <span class="spacer" />
-                    <span class="muted">{state.accounts.length}</span>
+                    <span class="muted">{accounts.list.length || ""}</span>
                   </Show>
                 </button>
               )}
@@ -686,7 +668,7 @@ export function SettingsView() {
               <AboutSection />
             </Match>
             <Match when={state.settingsSection === "accounts"}>
-              <AccountsSection />
+              <ClaudeAccountsSection />
             </Match>
             <Match when={state.settingsSection === "sessions"}>
               <SessionsSection />
