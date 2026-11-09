@@ -691,7 +691,10 @@ code {
   color: #c79a5b;
 }
 .tree-file {
-  color: var(--accent);
+  display: inline-flex;
+  flex: none;
+  /* The plain icon for unknown types; typed icons carry their own colors. */
+  color: var(--muted);
 }
 .tree-name {
   flex: 1;
@@ -2792,4 +2795,278 @@ body.resizing {
   text-align: center;
   color: var(--text-2);
   line-height: 1.55;
+}
+
+/* Real Claude accounts: Settings' list, the sign-in box and the panel's picker. */
+.account-list li.claude-account {
+  flex-direction: column;
+  align-items: stretch;
+}
+.claude-account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.claude-account-row .signed-in,
+.claude-account-row .signed-out {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+}
+.sign-in-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.sign-in-box strong {
+  color: var(--text);
+}
+.sign-in-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sign-in-fallback summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.sign-in-fallback .field {
+  margin: 8px 0;
+}
+.sign-in-fallback .row .input {
+  flex: 1;
+  min-width: 0;
+}
+.account-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 260px;
+}
+.account-picker .field {
+  width: 100%;
+  text-align: left;
+}
+.account-picker .signed-in,
+.account-picker .signed-out {
+  max-width: 100%;
+}
+.claude-account-chip {
+  display: inline-flex;
+  flex: none;
+}
+.accounts-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* Markdown preview: shown in place of the editor, in the same tab. */
+.md-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  font: 11.5px var(--font-ui);
+  color: var(--text-2);
+}
+.md-toggle .toggle-track {
+  transform: scale(0.8);
+}
+.md-preview {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.md-preview:focus {
+  outline: none;
+}
+.md-body {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 28px 32px 64px;
+  font: 14px / 1.65 var(--font-ui);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.4em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 650;
+}
+.md-body h1 {
+  font-size: 1.85em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--line);
+}
+.md-body h2 {
+  font-size: 1.4em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--line);
+}
+.md-body h3 {
+  font-size: 1.15em;
+}
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  font-size: 1em;
+}
+.md-body h6 {
+  color: var(--text-2);
+}
+.md-body :is(p, ul, ol, blockquote, pre, .md-table, hr) {
+  margin: 0 0 1em;
+}
+.md-body :is(ul, ol) {
+  padding-left: 1.7em;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ul ul {
+  list-style: circle;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body li > :is(p, ul, ol) {
+  margin-bottom: 0.25em;
+}
+.md-body li.md-task {
+  list-style: none;
+  position: relative;
+}
+.md-body li.md-task > input {
+  position: absolute;
+  left: -1.45em;
+  top: 0.35em;
+  margin: 0;
+}
+.md-body blockquote {
+  padding: 0 1em;
+  border-left: 3px solid var(--line);
+  color: var(--text-2);
+}
+.md-body code {
+  padding: 0.12em 0.38em;
+  border-radius: 4px;
+  background: var(--field);
+  font: 0.88em var(--font-code);
+}
+.md-body pre.md-code {
+  padding: 12px 14px;
+  border-radius: 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: auto;
+  line-height: 1.5;
+}
+.md-body pre.md-code code {
+  padding: 0;
+  background: none;
+  font-size: 12.5px;
+  white-space: pre;
+}
+.md-body hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.md-table {
+  overflow-x: auto;
+}
+.md-body table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.md-body :is(th, td) {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.md-body th {
+  background: var(--panel-2);
+  font-weight: 600;
+}
+.md-body .align-center {
+  text-align: center;
+}
+.md-body .align-right {
+  text-align: right;
+}
+.md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+button.md-file-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.md-image {
+  color: var(--muted);
+  font-style: italic;
+}
+.md-html {
+  color: var(--text-2);
+}
+
+/* Typed file icons: letters on a badge, from components/FileTypeIcon.tsx. */
+.file-type text {
+  font-family: var(--font-ui);
+  letter-spacing: -0.03em;
+}
+.file-tab-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+.file-chip .icon {
+  color: var(--muted);
+}
+
+/* The composer's mode and model switches. */
+.mode-btn {
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.mode-btn:hover {
+  background: var(--hover);
+}
+.mode-btn.mode-accept {
+  border-color: var(--amber-line);
+  color: var(--amber);
+}
+.mode-btn.mode-plan {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.model-select {
+  min-width: 0;
+  max-width: 140px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  text-overflow: ellipsis;
 }

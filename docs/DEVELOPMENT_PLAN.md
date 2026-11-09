@@ -2,7 +2,7 @@
 
 How Claudine goes from a mock UI to a real, usable editor.
 
-**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel (Later, step 2). Next: Milestone 5, saving.
+**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel, with mode and model switching (Later, step 2), on any of several Claude accounts (Later, step 5). Markdown files have a preview. Next: Milestone 5, saving.
 
 ## The first goal: a usable editor
 
@@ -200,12 +200,12 @@ Rough order, to be planned in detail when we get there:
 2. **Running `claude` (first slice done):** one session per open project, in a real chat panel. Rust runs `claude -p` with stream-json in and out and `--permission-prompt-tool stdio`, asks once per folder whether to trust it, and decides each permission request from the user's Allow or Deny. See `apps/desktop/src-tauri/src/claude.rs` and SECURITY.md. Still to do:
    - Stream text as it's written (`--include-partial-messages`), and render Markdown.
    - Several sessions, and resuming one (`--resume`).
-   - "Always allow" and permission modes, through `claude`'s permission updates.
+   - "Always allow", through `claude`'s permission updates. Modes (ask, accept edits, plan) and models are done: control messages, checked in Rust.
    - Show Claude's edits as a diff to review, instead of reloading the file (step 4).
    - Handle a file with unsaved edits that Claude changes on disk (with Milestone 5's conflict check).
 3. **Socket between hook and app,** with authentication.
 4. **Real approvals and diff review:** replaces the mock `decideHunk` and `approveEdit`. Decisions must move into Rust. Per-hunk accept needs its own design, because `PreToolUse` decides on a whole tool call.
-5. **Accounts:** a separate config folder per account.
+5. **Accounts (first slice done):** a separate config folder per account, with sign-in, status and sign-out through `claude auth`, and an account picker in the Claude panel. See `apps/desktop/src-tauri/src/accounts.rs` and SECURITY.md. Still to do: running sessions on two accounts at once (with "several sessions" above), and connecting the preview's Accounts page and Setup step to the real accounts.
 6. **Tripwire and audit log** in `crates/core`.
 7. **Packaging:** bundling, the hook sidecar, signing and release CI.
 8. **Code intelligence (language servers):** type-aware completion, go to definition, hover, rename, live errors and formatting. For Rust this means running `rust-analyzer` as a separate process and talking to it over LSP, which needs Rust backend work.
@@ -252,4 +252,4 @@ Each crate's own dependencies may bring licenses that `deny.toml` rejects, so ru
 - **CI has never run.** The repo has no remote yet. Push it early so the workflow gets its first real test.
 - **Browser test harness:** the Chrome and WebKit checks used so far lived in a temp folder and aren't in the repo. Decide whether to add them, ideally without new dependencies.
 - **npm licenses:** `cargo deny` only covers Rust, so nothing checks npm licenses yet.
-- **"Stores nothing but the path":** the Accounts and Setup text overstates what's stored, because labels and colors are kept too. Fix the wording before account linking ships.
+- **"Stores nothing but the path":** the preview's Accounts page and Setup step still say this, but labels and colors are kept too. The real Settings section says it correctly; fix the preview text when those screens are connected.

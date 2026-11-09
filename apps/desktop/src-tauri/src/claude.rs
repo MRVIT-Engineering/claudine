@@ -6,10 +6,11 @@
 //! The webview only says allow or deny for a request id. The input that then runs is the
 //! copy Rust kept, so the webview can't change what was approved.
 
+use crate::accounts::{AccountsState, use_account};
 use crate::error::CommandError;
 use crate::project::ProjectState;
 use crate::trust::TrustState;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 // LEARN: `Value` is untyped JSON, like `unknown` after `JSON.parse`; `json!` builds one.
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -31,6 +32,8 @@ const MAX_SHOWN_CHARS: usize = 4_000;
 /// How much of `claude`'s stderr is kept to explain an unexpected exit.
 const STDERR_TAIL_BYTES: usize = 4_000;
 const DECLINED: &str = "The user declined this in Claudine.";
+/// More models than this in `claude`'s list are ignored.
+const MAX_MODELS: usize = 30;
 
 /// What the webview hears about a session, already summarized by Rust.
 ///
@@ -77,11 +80,56 @@ pub enum SessionEvent {
         message: Option<String>,
         cost_usd: Option<f64>,
     },
+    /// What `claude` offers, from its answer to `initialize`. Arrives before any message.
+    Options {
+        models: Vec<ModelOption>,
+        mode: String,
+    },
+    /// The permission mode changed, from Claudine or from `claude` leaving plan mode.
+    Mode {
+        mode: String,
+    },
+    /// The model changed. `model` is the full id, such as `claude-sonnet-5-5`.
+    Model {
+        model: String,
+    },
+    /// `claude` refused a request from Claudine.
+    Notice {
+        message: String,
+    },
     /// `stderr` is the end of `claude`'s error output, to explain a failed start.
     Exited {
         code: Option<i32>,
         stderr: String,
     },
+}
+
+/// One entry of `claude`'s model list. `value` is what `set_model` takes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ModelOption {
+    value: String,
+    name: String,
+    description: String,
+}
+
+/// The modes Claudine offers. `bypassPermissions`, `auto` and `dontAsk` are left out:
+/// the first two let `claude` approve tools itself, without asking Claudine.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionMode {
+    Default,
+    AcceptEdits,
+    Plan,
+}
+
+impl PermissionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            PermissionMode::Default => "default",
+            PermissionMode::AcceptEdits => "acceptEdits",
+            PermissionMode::Plan => "plan",
+        }
+    }
 }
 
 /// The pieces of a running session that commands and the reader thread share.
@@ -91,9 +139,13 @@ struct Handles {
     /// Open permission requests: `claude`'s request id to the tool input it asked about.
     // LEARN: `HashMap` is `Map`; keys and values each have one type, fixed at compile time.
     pending: Arc<Mutex<HashMap<String, Value>>>,
+    /// The model values `claude` listed, the only ones `set_model` passes on.
+    models: Arc<Mutex<Vec<String>>>,
 }
 
 struct Session {
+    /// The account it runs on, so signing that account out can stop it.
+    account: String,
     child: Arc<Mutex<Child>>,
     handles: Handles,
     next_request: AtomicU64,
@@ -122,6 +174,15 @@ impl SessionState {
         }
     }
 
+    /// Ends the current session if it runs on `account`.
+    pub fn stop_account(&self, account: &str) {
+        if let Ok(mut current) = self.0.lock()
+            && current.as_ref().is_some_and(|s| s.account == account)
+        {
+            *current = None;
+        }
+    }
+
     /// Copies of the shared handles, so the session lock isn't held while writing.
     fn handles(&self) -> Result<Handles, CommandError> {
         let current = self.0.lock().map_err(|_| CommandError::Internal)?;
@@ -135,22 +196,22 @@ impl SessionState {
 
 /// Looks for the user's own install. Never downloads or installs anything.
 ///
-/// Apps started from the Dock get a minimal `PATH`, so the usual install folders are
-/// checked first. Relative `PATH` entries are skipped: `.` would let a project supply
-/// its own `claude`.
-fn find_claude() -> Option<PathBuf> {
+/// `PATH` comes first, so the app runs the same `claude` as the user's terminal. Apps
+/// started from the Dock get a minimal `PATH`, so the usual install folders follow.
+/// Relative `PATH` entries are skipped: `.` would let a project supply its own `claude`.
+pub fn find_claude() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        for folder in std::env::split_paths(&path).filter(|folder| folder.is_absolute()) {
+            candidates.push(folder.join("claude"));
+        }
+    }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         candidates.push(home.join(".local/bin/claude"));
         candidates.push(home.join(".claude/local/claude"));
     }
     candidates.push(PathBuf::from("/opt/homebrew/bin/claude"));
     candidates.push(PathBuf::from("/usr/local/bin/claude"));
-    if let Some(path) = std::env::var_os("PATH") {
-        for folder in std::env::split_paths(&path).filter(|folder| folder.is_absolute()) {
-            candidates.push(folder.join("claude"));
-        }
-    }
     candidates.into_iter().find(|path| is_executable(path))
 }
 
@@ -167,13 +228,25 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
+/// A failed spawn: `NotFound` means `claude` itself is gone.
+pub fn spawn_error(error: io::Error) -> CommandError {
+    match error.kind() {
+        io::ErrorKind::NotFound => CommandError::ClaudeNotFound,
+        other => CommandError::from(other),
+    }
+}
+
+/// `config_dir` is the account's config folder, or `None` for the default account.
 fn spawn_session(
     claude: &Path,
     folder: &Path,
+    account: &str,
+    config_dir: Option<&Path>,
     on_event: Channel<SessionEvent>,
 ) -> Result<Session, CommandError> {
     // LEARN: `Command` is `child_process.spawn`; `Stdio::piped()` hands us each stream.
-    let mut child = Command::new(claude)
+    let mut command = Command::new(claude);
+    command
         .args([
             "-p",
             "--input-format",
@@ -188,16 +261,11 @@ fn spawn_session(
             "default",
         ])
         .current_dir(folder)
-        // Set when the app itself was started from a Claude Code session.
-        .env_remove("CLAUDECODE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| match error.kind() {
-            io::ErrorKind::NotFound => CommandError::ClaudeNotFound,
-            other => CommandError::from(other),
-        })?;
+        .stderr(Stdio::piped());
+    use_account(&mut command, config_dir);
+    let mut child = command.spawn().map_err(spawn_error)?;
 
     // `take` moves each pipe out of `child`, leaving `None`; it's always there after `piped()`.
     let (Some(stdin), Some(stdout), Some(stderr)) =
@@ -210,6 +278,7 @@ fn spawn_session(
     let handles = Handles {
         stdin: Arc::new(Mutex::new(stdin)),
         pending: Arc::new(Mutex::new(HashMap::new())),
+        models: Arc::new(Mutex::new(Vec::new())),
     };
     let child = Arc::new(Mutex::new(child));
     let stderr_tail = Arc::new(Mutex::new(String::new()));
@@ -240,6 +309,7 @@ fn spawn_session(
     )?;
 
     Ok(Session {
+        account: account.to_string(),
         child,
         handles,
         next_request: AtomicU64::new(1),
@@ -247,7 +317,7 @@ fn spawn_session(
 }
 
 /// Reads `stderr` until it closes, keeping only its last few thousand bytes.
-fn keep_tail(stderr: impl Read, tail: &Mutex<String>) {
+pub fn keep_tail(stderr: impl Read, tail: &Mutex<String>) {
     for line in BufReader::new(stderr).lines() {
         let Ok(line) = line else { break };
         let Ok(mut tail) = tail.lock() else { break };
@@ -264,7 +334,7 @@ fn keep_tail(stderr: impl Read, tail: &Mutex<String>) {
 }
 
 /// Polls instead of blocking in `wait`, so `Drop` can still take the lock to kill it.
-fn wait_for_exit(child: &Mutex<Child>) -> Option<i32> {
+pub fn wait_for_exit(child: &Mutex<Child>) -> Option<i32> {
     for _ in 0..40 {
         let Ok(mut child) = child.lock() else {
             return None;
@@ -354,6 +424,7 @@ impl Relay {
                     Vec::new()
                 }
             }
+            Some("control_response") => self.control_response(&message["response"]),
             Some("control_cancel_request") => {
                 if let Ok(mut pending) = self.handles.pending.lock() {
                     pending.remove(&id);
@@ -365,6 +436,68 @@ impl Relay {
     }
 }
 
+impl Relay {
+    /// `claude`'s answers to Claudine's own requests: `initialize`, mode and model.
+    fn control_response(&self, response: &Value) -> Vec<SessionEvent> {
+        let id = response["request_id"].as_str().unwrap_or("");
+        if !id.starts_with("claudine-") {
+            return Vec::new();
+        }
+        if response["subtype"] == "error" {
+            let message = response["error"]
+                .as_str()
+                .unwrap_or("Claude Code refused that.");
+            return vec![SessionEvent::Notice {
+                message: shorten(message.to_string()),
+            }];
+        }
+        let body = &response["response"];
+        if id == "claudine-init" {
+            let models = model_options(body);
+            if let Ok(mut known) = self.handles.models.lock() {
+                *known = models.iter().map(|m| m.value.clone()).collect();
+            }
+            let mode = body["current_permission_mode"]
+                .as_str()
+                .unwrap_or("default");
+            return vec![SessionEvent::Options {
+                models,
+                mode: mode.to_string(),
+            }];
+        }
+        match body["model"].as_str() {
+            Some(model) if id.starts_with("claudine-model-") => vec![SessionEvent::Model {
+                model: model.to_string(),
+            }],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The model list from `initialize`'s answer. Older versions don't send one.
+fn model_options(body: &Value) -> Vec<ModelOption> {
+    let Some(list) = body["models"].as_array() else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|model| {
+            let value = model["value"].as_str()?;
+            if value.is_empty() || value.len() > 100 {
+                return None;
+            }
+            let text = |key: &str| shorten(model[key].as_str().unwrap_or("").to_string());
+            Some(ModelOption {
+                value: value.to_string(),
+                name: Some(text("displayName"))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| value.to_string()),
+                description: text("description"),
+            })
+        })
+        .take(MAX_MODELS)
+        .collect()
+}
+
 /// Turns one of `claude`'s output messages into events. Unknown messages give none.
 fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
     let mut events = Vec::new();
@@ -372,6 +505,13 @@ fn events_for(message: &Value, root: &Path) -> Vec<SessionEvent> {
         Some("system") if message["subtype"] == "init" => {
             let model = message["model"].as_str().unwrap_or("").to_string();
             events.push(SessionEvent::Ready { model });
+        }
+        Some("system") if message["subtype"] == "status" => {
+            if let Some(mode) = message["permissionMode"].as_str() {
+                events.push(SessionEvent::Mode {
+                    mode: mode.to_string(),
+                });
+            }
         }
         Some("assistant") => {
             for block in blocks(message) {
@@ -481,6 +621,7 @@ fn describe(tool: &str, input: &Value, root: &Path) -> Described {
         "Glob" | "Grep" => (text("pattern"), text("path"), false),
         "WebFetch" => (text("url"), text("prompt"), false),
         "WebSearch" => (text("query"), String::new(), false),
+        "ExitPlanMode" => ("Leave plan mode and start".to_string(), text("plan"), false),
         _ => (String::new(), input.to_string(), false),
     };
     Described {
@@ -537,7 +678,7 @@ pub fn claude_status() -> ClaudeStatus {
     }
 }
 
-/// Starts `claude` in the open project, replacing any running session.
+/// Starts `claude` in the open project on `account`, replacing any running session.
 ///
 /// The first time for each folder, Rust asks natively whether to trust it. Events then
 /// arrive on `on_event` until the process exits.
@@ -546,10 +687,14 @@ pub fn start_session(
     app: AppHandle,
     projects: State<'_, ProjectState>,
     trust: State<'_, TrustState>,
+    accounts: State<'_, AccountsState>,
     sessions: State<'_, SessionState>,
+    account: String,
     on_event: Channel<SessionEvent>,
 ) -> Result<(), CommandError> {
     let (name, folder) = projects.name_and_path()?;
+    // Looked up by id: the webview never names a config folder.
+    let config_dir = accounts.config_dir(&account)?;
     let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
 
     if !trust.is_trusted(&folder) {
@@ -579,7 +724,8 @@ pub fn start_session(
         trust.trust(&folder)?;
     }
 
-    let session = spawn_session(&claude, &folder, on_event)?;
+    let session = spawn_session(&claude, &folder, &account, config_dir.as_deref(), on_event)?;
+    accounts.set_last_used(&account);
     let mut current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
     // Replacing the old session drops it, which stops its process.
     *current = Some(session);
@@ -631,10 +777,9 @@ fn answer(handles: &Handles, id: &str, allow: bool) -> Result<(), CommandError> 
     )
 }
 
-/// Stops the current turn, like pressing Esc in the terminal. The session stays open.
-#[tauri::command(async)]
-pub fn interrupt_session(sessions: State<'_, SessionState>) -> Result<(), CommandError> {
-    let request_id = {
+/// Sends Claudine's own control request. `kind` goes in the id, to match the answer.
+fn send_control(sessions: &SessionState, kind: &str, request: Value) -> Result<(), CommandError> {
+    let number = {
         let current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
         let session = current.as_ref().ok_or(CommandError::NoSession)?;
         session.next_request.fetch_add(1, Ordering::Relaxed)
@@ -644,10 +789,49 @@ pub fn interrupt_session(sessions: State<'_, SessionState>) -> Result<(), Comman
         &handles.stdin,
         &json!({
             "type": "control_request",
-            "request_id": format!("claudine-{request_id}"),
-            "request": { "subtype": "interrupt" }
+            "request_id": format!("claudine-{kind}-{number}"),
+            "request": request
         }),
     )
+}
+
+/// Stops the current turn, like pressing Esc in the terminal. The session stays open.
+#[tauri::command(async)]
+pub fn interrupt_session(sessions: State<'_, SessionState>) -> Result<(), CommandError> {
+    send_control(&sessions, "interrupt", json!({ "subtype": "interrupt" }))
+}
+
+/// Switches the permission mode. Serde refuses any mode not in `PermissionMode`.
+#[tauri::command(async)]
+pub fn set_mode(
+    sessions: State<'_, SessionState>,
+    mode: PermissionMode,
+) -> Result<(), CommandError> {
+    send_control(
+        &sessions,
+        "mode",
+        json!({ "subtype": "set_permission_mode", "mode": mode.as_str() }),
+    )
+}
+
+/// Switches the model, to one of those `claude` listed.
+#[tauri::command(async)]
+pub fn set_model(sessions: State<'_, SessionState>, model: String) -> Result<(), CommandError> {
+    check_model(&sessions.handles()?, &model)?;
+    send_control(
+        &sessions,
+        "model",
+        json!({ "subtype": "set_model", "model": model }),
+    )
+}
+
+fn check_model(handles: &Handles, model: &str) -> Result<(), CommandError> {
+    let known = handles.models.lock().map_err(|_| CommandError::Internal)?;
+    if known.iter().any(|m| m == model) {
+        Ok(())
+    } else {
+        Err(CommandError::InvalidInput)
+    }
 }
 
 #[tauri::command]
@@ -689,7 +873,7 @@ printf '%s\n' "$answer" > answer.json
             }
             Ok(())
         });
-        let session = spawn_session(&fake, &folder, channel).unwrap();
+        let session = spawn_session(&fake, &folder, "default", None, channel).unwrap();
         (session, folder, events)
     }
 
@@ -906,6 +1090,118 @@ printf '%s\n' "$answer" > answer.json
                 cost_usd: Some(0.0027),
             }]
         );
+    }
+
+    /// A relay for messages that don't need a running `claude`. Its stdin is `cat`'s;
+    /// the caller ends `cat` with `finish`.
+    fn test_relay() -> (Relay, Child) {
+        let mut child = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let relay = Relay {
+            handles: Handles {
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::new(Mutex::new(HashMap::new())),
+                models: Arc::new(Mutex::new(Vec::new())),
+            },
+            root: root(),
+            on_event: Channel::new(|_| Ok(())),
+        };
+        (relay, child)
+    }
+
+    fn finish(mut child: Child) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn the_model_list_is_kept_and_only_listed_models_pass() {
+        let (relay, cat) = test_relay();
+        // Shape from `claude` 2.1.309's answer to `initialize`, trimmed.
+        let init = json!({
+            "type": "control_response",
+            "response": { "subtype": "success", "request_id": "claudine-init", "response": {
+                "current_permission_mode": "default",
+                "models": [
+                    { "value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5" },
+                    { "value": "sonnet", "displayName": "Sonnet 5.5", "description": "Fast" },
+                    { "value": "" },
+                    { "displayName": "No value" }
+                ]
+            }}
+        });
+        let events = relay.handle(&init);
+        let SessionEvent::Options { models, mode } = &events[0] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(mode, "default");
+        let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
+        assert_eq!(values, ["default", "sonnet"]);
+        assert_eq!(models[1].name, "Sonnet 5.5");
+
+        assert_eq!(check_model(&relay.handles, "sonnet"), Ok(()));
+        for model in ["claude-3-opus", "sonnet --dangerously-skip-permissions", ""] {
+            assert_eq!(
+                check_model(&relay.handles, model),
+                Err(CommandError::InvalidInput)
+            );
+        }
+        finish(cat);
+    }
+
+    #[test]
+    fn mode_changes_and_refusals_are_relayed() {
+        let (relay, cat) = test_relay();
+        let status = json!({ "type": "system", "subtype": "status", "permissionMode": "plan" });
+        assert_eq!(
+            relay.handle(&status),
+            vec![SessionEvent::Mode {
+                mode: "plan".to_string()
+            }]
+        );
+        let model = json!({ "type": "control_response", "response": {
+            "subtype": "success", "request_id": "claudine-model-3",
+            "response": { "model": "claude-sonnet-5-5" } } });
+        assert_eq!(
+            relay.handle(&model),
+            vec![SessionEvent::Model {
+                model: "claude-sonnet-5-5".to_string()
+            }]
+        );
+        let refused = json!({ "type": "control_response", "response": {
+            "subtype": "error", "request_id": "claudine-mode-4", "error": "invalid_mode" } });
+        assert_eq!(
+            relay.handle(&refused),
+            vec![SessionEvent::Notice {
+                message: "invalid_mode".to_string()
+            }]
+        );
+        // Answers to requests Claudine didn't send are ignored.
+        let other = json!({ "type": "control_response", "response": {
+            "subtype": "error", "request_id": "x", "error": "no" } });
+        assert!(relay.handle(&other).is_empty());
+        finish(cat);
+    }
+
+    #[test]
+    fn only_the_offered_modes_deserialize() {
+        let mode: PermissionMode = serde_json::from_str(r#""acceptEdits""#).unwrap();
+        assert_eq!(mode.as_str(), "acceptEdits");
+        for refused in [
+            r#""bypassPermissions""#,
+            r#""auto""#,
+            r#""dontAsk""#,
+            r#""Plan""#,
+        ] {
+            assert!(
+                serde_json::from_str::<PermissionMode>(refused).is_err(),
+                "{refused}"
+            );
+        }
     }
 
     #[test]

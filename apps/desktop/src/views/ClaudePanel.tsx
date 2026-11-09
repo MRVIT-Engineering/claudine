@@ -7,22 +7,27 @@ import {
   Show,
   Switch,
 } from "solid-js";
-import { Empty } from "../components/Common";
+import { AccountBadge, Empty } from "../components/Common";
 import { ArrowUp, CloseIcon } from "../components/Icons";
 import { Mascot } from "../components/Mascot";
+import { accountById, accounts, startSignIn } from "../state/accounts";
 import {
   answerPermission,
   type ChatEntry,
   checkClaudeInstalled,
   claude,
+  cycleMode,
   interruptClaude,
+  MODES,
   type PermissionRequest,
   sendToClaude,
+  setModel,
   startClaude,
   stopClaude,
   toggleClaudePanel,
 } from "../state/claude";
 import { openFile, state } from "../state/store";
+import { AccountPicker, SignInBox } from "./ClaudeAccounts";
 
 /** Text with `code` spans. Rendered as text nodes, never as HTML. */
 function Prose(props: { text: string }) {
@@ -134,6 +139,44 @@ function PermissionPrompt(props: { request: PermissionRequest }) {
   );
 }
 
+function ModeButton() {
+  const current = () => MODES.find((m) => m.value === claude.mode);
+  return (
+    <button
+      type="button"
+      class="composer-btn mode-btn"
+      classList={{
+        "mode-accept": claude.mode === "acceptEdits",
+        "mode-plan": claude.mode === "plan",
+      }}
+      title={`${current()?.hint ?? `Claude Code's mode: ${claude.mode}`} Click or press Shift+Tab to switch.`}
+      onClick={cycleMode}
+    >
+      {current()?.label ?? claude.mode}
+    </button>
+  );
+}
+
+function ModelPicker() {
+  const description = () =>
+    claude.models.find((m) => m.value === claude.modelChoice)?.description;
+  return (
+    <Show when={claude.models.length > 0}>
+      <select
+        class="composer-btn model-select"
+        aria-label="Model"
+        title={[description(), claude.model].filter(Boolean).join(" · ")}
+        value={claude.modelChoice}
+        onChange={(e) => void setModel(e.currentTarget.value)}
+      >
+        <For each={claude.models}>
+          {(model) => <option value={model.value}>{model.name}</option>}
+        </For>
+      </select>
+    </Show>
+  );
+}
+
 function Composer() {
   const [text, setText] = createSignal("");
   let input!: HTMLTextAreaElement;
@@ -169,10 +212,16 @@ function Composer() {
           } else if (e.key === "Escape" && working()) {
             e.preventDefault();
             void interruptClaude();
+          } else if (e.key === "Tab" && e.shiftKey) {
+            // Like the terminal: Shift+Tab cycles the mode.
+            e.preventDefault();
+            cycleMode();
           }
         }}
       />
       <div class="composer-row">
+        <ModeButton />
+        <ModelPicker />
         <Show when={working()}>
           <button
             type="button"
@@ -213,6 +262,13 @@ function statusLabel(): string {
 }
 
 function StartScreen() {
+  const status = () => accounts.status[accounts.selected];
+  // Only a definite "signed out" blocks starting; if the check failed, `claude` says why.
+  const signedOut = () => {
+    const s = status();
+    return typeof s === "object" && !s.signedIn;
+  };
+  const signingIn = () => accounts.signIn?.account === accounts.selected;
   return (
     <Switch>
       <Match when={!state.project}>
@@ -237,17 +293,35 @@ function StartScreen() {
         <div class="claude-start">
           <Mascot size={44} />
           <p>
-            Claude Code runs in <strong>{state.project?.name}</strong> with your
-            own login and settings. You approve each edit and command here.
+            Claude Code runs in <strong>{state.project?.name}</strong> with the
+            account you pick. You approve each edit and command here.
           </p>
-          <button
-            type="button"
-            class="btn btn-accent"
-            disabled={claude.status === "starting"}
-            onClick={() => void startClaude()}
+          <AccountPicker />
+          <Show
+            when={signedOut()}
+            fallback={
+              <button
+                type="button"
+                class="btn btn-accent"
+                disabled={claude.status === "starting"}
+                onClick={() => void startClaude()}
+              >
+                {claude.status === "ended"
+                  ? "Start a new session"
+                  : "Start Claude"}
+              </button>
+            }
           >
-            {claude.status === "ended" ? "Start a new session" : "Start Claude"}
-          </button>
+            <button
+              type="button"
+              class="btn btn-accent"
+              disabled={signingIn()}
+              onClick={() => void startSignIn(accounts.selected)}
+            >
+              Sign in to start
+            </button>
+          </Show>
+          <SignInBox account={accounts.selected} />
         </div>
       </Match>
     </Switch>
@@ -275,6 +349,17 @@ export function ClaudePanel() {
       <div class="chat-tabs claude-head">
         <Mascot size={16} />
         <strong>Claude</strong>
+        <Show when={live() && accountById(claude.account)}>
+          {(account) => (
+            <span class="claude-account-chip" title={account().label}>
+              <AccountBadge
+                label={account().label}
+                color={account().color}
+                size="sm"
+              />
+            </span>
+          )}
+        </Show>
         <Show when={claude.model}>
           <span class="muted truncate">{claude.model}</span>
         </Show>

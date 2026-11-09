@@ -32,7 +32,7 @@ Mode: explain
 | `#[serde(rename_all)]` | introduced | apps/desktop/src-tauri/src/error.rs | Rust names to camelCase for TypeScript |
 | `Mutex` and lock guards | introduced | apps/desktop/src-tauri/src/project.rs | `lock()` can fail if a thread panicked; `*guard =` writes through |
 | `Option` and `let ... else` | introduced | apps/desktop/src-tauri/src/project.rs | Unwrap or exit early; no forgotten `undefined` |
-| `tauri::State<'_, T>` | introduced | apps/desktop/src-tauri/src/project.rs | Managed state; the `'_` lifetime isn't explained yet |
+| `tauri::State<'_, T>` | introduced | apps/desktop/src-tauri/src/project.rs | Managed state; `'_` means it borrows from something the caller owns |
 | `sort_by` with `Ordering` | introduced | apps/desktop/src-tauri/src/files.rs | Comparators return Less/Equal/Greater; `then_with` breaks ties |
 | `Option::as_deref` | introduced | apps/desktop/src-tauri/src/project.rs | `Option<String>` to `Option<&str>` |
 | `String::from_utf8` | introduced | apps/desktop/src-tauri/src/files.rs | Fails on invalid UTF-8 instead of replacing bytes |
@@ -45,6 +45,8 @@ Mode: explain
 | `std::process::Command` and pipes | introduced | apps/desktop/src-tauri/src/claude.rs | Like `child_process.spawn`; `take()` moves each pipe out of the `Child` |
 | `serde_json::Value` and `json!` | introduced | apps/desktop/src-tauri/src/claude.rs | Untyped JSON; a missing key indexes to `Null` instead of panicking |
 | `HashMap` | introduced | apps/desktop/src-tauri/src/claude.rs | One key type and one value type; `remove` returns the value, which makes "answer once" easy |
+| The `'_` lifetime | introduced | apps/desktop/src-tauri/src/accounts.rs | `MutexGuard<'_, T>` borrows from `self`, so it can't outlive it |
+| Extension traits (`DirBuilderExt`) | introduced | apps/desktop/src-tauri/src/accounts.rs | Unix-only methods such as `mode`, once the trait is in scope |
 | `Box<dyn Error>` | introduced | apps/desktop/src-tauri/src/main.rs | Any error type behind a pointer, so `?` works in `setup` |
 
 ## Exercises
@@ -59,3 +61,4 @@ Mode: explain
 - **2026-11-05, open and browse a folder (explain mode):** Claude wrote the project commands in `apps/desktop/src-tauri` at the user's request. Introduced 10 concepts. One test expectation was wrong, not the code. Still owed: explaining the `'_` lifetime in `State<'_, T>`.
 - **2026-11-06, settings stored by Rust (explain mode):** Claude wrote `settings.rs` and wired the hidden names into `files.rs`. Introduced 5 concepts across 3 changes. No compiler errors. Still owed: the `'_` lifetime.
 - **2026-11-08, Claude sessions (explain mode):** Claude wrote `claude.rs` and `trust.rs`: running the user's `claude` with stream-json, Rust-side permission answers, and a per-folder trust prompt. Introduced 3 concepts; reused threads, `Arc`, `Mutex` and `Drop`. Clippy and the compiler passed first time. Tests include a fake `claude` shell script. Still owed: the `'_` lifetime.
+- **2026-11-09, Claude accounts, modes and models (explain mode):** Claude wrote `accounts.rs` (config folder per account, `claude auth` login, status and logout) and mode and model switching in `claude.rs`. Introduced 2 concepts and paid the owed `'_` lifetime. Clippy caught a test helper that never reaped its child process (`zombie_processes`). A real run showed that old `claude` versions read `auth status` as a prompt, so Rust now checks `claude auth --help` first.

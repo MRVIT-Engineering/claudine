@@ -11,14 +11,14 @@ import {
 } from "solid-js";
 import { type DirEntry, describeError, hasBackend } from "../backend";
 import { CodeEditor } from "../components/CodeEditor";
-import { AccountChip, Empty } from "../components/Common";
+import { AccountChip, Empty, Toggle } from "../components/Common";
+import { FileTypeIcon } from "../components/FileTypeIcon";
 import { openFindInActive } from "../components/FindPanel";
 import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
   CloseIcon,
-  FileIcon,
   FilesIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -27,11 +27,18 @@ import {
   SplitIcon,
   SunIcon,
 } from "../components/Icons";
+import { MarkdownPreview } from "../components/MarkdownPreview";
 import { Mascot } from "../components/Mascot";
 import { MergeReview } from "../components/MergeReview";
 import { Resizer } from "../components/Resizer";
 import { PREVIEW_CLAUDE } from "../lib/flags";
 import { claude, toggleClaudePanel } from "../state/claude";
+import {
+  isMarkdown,
+  isPreviewing,
+  PREVIEW_KEYS,
+  setMarkdownPreview,
+} from "../state/markdown";
 import {
   accountOf,
   activeSession,
@@ -102,7 +109,7 @@ function TreeItem(props: { entry: DirEntry; depth: number }) {
             <>
               <span class="tree-chevron" />
               <span class="tree-file">
-                <FileIcon size={13} />
+                <FileTypeIcon name={props.entry.name} size={14} />
               </span>
             </>
           }
@@ -279,7 +286,14 @@ function DiskFileView(props: { path: string }) {
         )}
       </Match>
       <Match when={ready()}>
-        {(file) => <CodeEditor path={props.path} text={file().text} />}
+        {(file) => (
+          <Show
+            when={isPreviewing(props.path)}
+            fallback={<CodeEditor path={props.path} text={file().text} />}
+          >
+            <MarkdownPreview path={props.path} />
+          </Show>
+        )}
       </Match>
     </Switch>
   );
@@ -309,6 +323,9 @@ function Tabs() {
                   <Show when={proposed()}>
                     <SplitIcon size={13} />
                   </Show>
+                  <span class="file-tab-icon">
+                    <FileTypeIcon name={path} size={13} />
+                  </span>
                   <span>{fileName(path)}</span>
                   <Show when={state.dirty[path]}>
                     <span class="dirty-dot" title="Unsaved changes" />
@@ -366,6 +383,19 @@ function Breadcrumb(props: { path: string }) {
           </>
         )}
       </For>
+      <Show when={isMarkdown(props.path) && !proposalFor(props.path)}>
+        <span
+          class="md-toggle"
+          title={`Show the rendered file (${PREVIEW_KEYS})`}
+        >
+          <span aria-hidden="true">Preview</span>
+          <Toggle
+            label="Markdown preview"
+            checked={isPreviewing(props.path)}
+            onChange={(on) => setMarkdownPreview(props.path, on)}
+          />
+        </span>
+      </Show>
     </nav>
   );
 }
@@ -801,7 +831,7 @@ function Composer(props: { session: Session }) {
       <div class="composer-row">
         <Show when={activeName()}>
           <span class="file-chip">
-            <FileIcon size={12} /> {activeName()}
+            <FileTypeIcon name={activeName() ?? ""} size={12} /> {activeName()}
           </span>
         </Show>
         <button

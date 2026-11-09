@@ -68,6 +68,27 @@ const theme = EditorView.theme({
     minWidth: "3em",
     padding: "0 0.8em 0 0",
   },
+  // Change bar (lib/changeGutter.ts).
+  ".cm-change-gutter .cm-gutterElement": {
+    width: "3px",
+    marginRight: "4px",
+    position: "relative",
+  },
+  ".cm-change-gutter .cm-change-add": {
+    backgroundColor: "var(--add-ink) !important",
+  },
+  ".cm-change-gutter .cm-change-change": {
+    backgroundColor: "var(--blue) !important",
+  },
+  ".cm-change-gutter .cm-change-del::before": {
+    content: '""',
+    position: "absolute",
+    top: "-4px",
+    left: "0",
+    borderTop: "4px solid transparent",
+    borderBottom: "4px solid transparent",
+    borderLeft: "5px solid var(--del-ink)",
+  },
   ".cm-activeLine": { backgroundColor: "var(--hover)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--hover)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },

@@ -1,6 +1,7 @@
 // Stops Windows from opening a console next to the app in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
 mod claude;
 mod error;
 mod files;
@@ -30,6 +31,9 @@ fn main() {
             app.manage(settings::SettingsState::load(path));
             let trusted = app.path().app_config_dir()?.join("trusted-projects.json");
             app.manage(trust::TrustState::load(trusted));
+            let accounts = app.path().app_config_dir()?.join("accounts.json");
+            let folders = app.path().app_data_dir()?.join("accounts");
+            app.manage(accounts::AccountsState::load(accounts, folders));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,6 +51,17 @@ fn main() {
             claude::answer_permission,
             claude::interrupt_session,
             claude::stop_session,
+            claude::set_mode,
+            claude::set_model,
+            accounts::list_accounts,
+            accounts::add_account,
+            accounts::update_account,
+            accounts::remove_account,
+            accounts::account_status,
+            accounts::sign_in,
+            accounts::submit_sign_in_code,
+            accounts::cancel_sign_in,
+            accounts::sign_out,
         ])
         .run(tauri::generate_context!())
         // LEARN: `expect` crashes with this message on `Err`; there's nothing to recover to here.
