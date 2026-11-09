@@ -1,6 +1,6 @@
-// The only way the UI reaches files: commands implemented in
-// apps/desktop/src-tauri/src/project.rs. Every security decision is made there.
-import { invoke } from "@tauri-apps/api/core";
+// The only way the UI reaches files and Claude: commands implemented in
+// apps/desktop/src-tauri/src/project.rs and claude.rs. Every security decision is made there.
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Settings } from "./types";
 
 export type CommandError =
@@ -18,7 +18,39 @@ export type CommandError =
   | { kind: "notText" }
   | { kind: "io"; detail: string }
   | { kind: "internal" }
+  | { kind: "claudeNotFound" }
+  | { kind: "notTrusted" }
+  | { kind: "noSession" }
   | { kind: "unavailable" };
+
+/** Mirrors `SessionEvent` in apps/desktop/src-tauri/src/claude.rs. */
+export type SessionEvent =
+  | { kind: "ready"; model: string }
+  | { kind: "text"; text: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      summary: string;
+      outside: boolean;
+    }
+  | { kind: "toolResult"; id: string; isError: boolean; text: string }
+  | {
+      kind: "permission";
+      id: string;
+      tool: string;
+      summary: string;
+      detail: string;
+      outside: boolean;
+    }
+  | { kind: "permissionClosed"; id: string }
+  | {
+      kind: "turnDone";
+      isError: boolean;
+      message: string | null;
+      costUsd: number | null;
+    }
+  | { kind: "exited"; code: number | null; stderr: string };
 
 export interface ProjectInfo {
   name: string;
@@ -79,6 +111,22 @@ export const backend = {
   /** Saves and returns what Rust stored, after it checked every value. */
   setSettings: (settings: Settings) =>
     call<Settings>("set_settings", { settings }),
+  claudeStatus: () => call<{ found: boolean }>("claude_status"),
+  /**
+   * Starts `claude` in the open project. The first time for a folder, Rust asks
+   * natively whether to trust it. Events arrive on `onEvent` until it exits.
+   */
+  startSession: (onEvent: (event: SessionEvent) => void) => {
+    const channel = new Channel<SessionEvent>();
+    channel.onmessage = onEvent;
+    return call<void>("start_session", { onEvent: channel });
+  },
+  sendMessage: (text: string) => call<void>("send_message", { text }),
+  /** Only an id and a yes or no: Rust runs the tool input it kept. */
+  answerPermission: (id: string, allow: boolean) =>
+    call<void>("answer_permission", { id, allow }),
+  interruptSession: () => call<void>("interrupt_session"),
+  stopSession: () => call<void>("stop_session"),
 };
 
 export function isCommandError(error: unknown): error is CommandError {
@@ -120,6 +168,12 @@ export function describeError(error: CommandError): string {
       return `Couldn't read this: ${error.detail}.`;
     case "internal":
       return "Something went wrong. Restart the app and try again.";
+    case "claudeNotFound":
+      return "Claude Code isn't installed. Install it, then try again.";
+    case "notTrusted":
+      return "Claude wasn't started, because the folder isn't trusted.";
+    case "noSession":
+      return "Claude isn't running. Start a new session.";
     case "unavailable":
       return "Opening folders needs the desktop app. Run pnpm tauri dev.";
   }

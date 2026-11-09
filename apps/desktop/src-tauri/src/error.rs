@@ -30,6 +30,12 @@ pub enum CommandError {
     },
     /// A thread panicked while holding the project lock.
     Internal,
+    /// Claude Code isn't installed in any of the usual places.
+    ClaudeNotFound,
+    /// The user didn't trust the folder, so `claude` wasn't started.
+    NotTrusted,
+    /// No session is running, or its process has exited.
+    NoSession,
 }
 
 // LEARN: a `From` impl is what lets `?` turn a `GuardError` into a `CommandError` by itself.

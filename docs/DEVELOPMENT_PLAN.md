@@ -2,7 +2,7 @@
 
 How Claudine goes from a mock UI to a real, usable editor.
 
-**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. Next: Milestone 5, saving.
+**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel (Later, step 2). Next: Milestone 5, saving.
 
 ## The first goal: a usable editor
 
@@ -197,7 +197,12 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 Rough order, to be planned in detail when we get there:
 
 1. **Hook protocol:** real `HookEvent` messages, plus the hook failing closed. Any internal failure must exit 2, because other exit codes let the action through. Test the actual exit codes.
-2. **Running `claude`:** one process per session, using the user's own install. This depends on [D4](#decisions-needed).
+2. **Running `claude` (first slice done):** one session per open project, in a real chat panel. Rust runs `claude -p` with stream-json in and out and `--permission-prompt-tool stdio`, asks once per folder whether to trust it, and decides each permission request from the user's Allow or Deny. See `apps/desktop/src-tauri/src/claude.rs` and SECURITY.md. Still to do:
+   - Stream text as it's written (`--include-partial-messages`), and render Markdown.
+   - Several sessions, and resuming one (`--resume`).
+   - "Always allow" and permission modes, through `claude`'s permission updates.
+   - Show Claude's edits as a diff to review, instead of reloading the file (step 4).
+   - Handle a file with unsaved edits that Claude changes on disk (with Milestone 5's conflict check).
 3. **Socket between hook and app,** with authentication.
 4. **Real approvals and diff review:** replaces the mock `decideHunk` and `approveEdit`. Decisions must move into Rust. Per-hunk accept needs its own design, because `PreToolUse` decides on a whole tool call.
 5. **Accounts:** a separate config folder per account.
@@ -215,12 +220,13 @@ Defaults are what the plan assumes unless you say otherwise.
 | # | Question | Default | Why it matters | Needed by |
 |---|---|---|---|---|
 | D3 | Does delete go to the Trash or remove permanently? | **Trash**, through the `trash` crate if it passes review. | Trash is recoverable, which matters when an editor can delete things. Permanent delete needs no dependency. | M6 |
-| D4 | Chat panel or embedded terminal? | **Chat panel**, if `claude`'s structured output covers these screens. | Doesn't block the first goal, but decides how `claude` runs. | Later, step 2 |
 
 **Decided:**
 
 - **D1:** Claude wrote the path guard, for you to review line by line.
 - **D2:** Use `cap-std`. In a test, it leaked 0 of 200,000 racing reads, while a plain check-then-read guard leaked 615.
+- **D4:** Chat panel, with `claude`'s stream-json output. Permission requests go to Rust through `--permission-prompt-tool stdio`; the hook and socket come later as a second, fail-closed layer.
+- **D6:** Ask once per folder before running `claude` there, and remember the answer in Rust.
 - **D5:** macOS and Linux first. The attack tests only run on Unix, so Windows needs its own review before it's supported.
 
 ## New dependencies this plan asks for
