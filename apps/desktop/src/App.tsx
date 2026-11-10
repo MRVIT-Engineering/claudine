@@ -1,7 +1,9 @@
 import { Match, onMount, Show, Switch } from "solid-js";
+import { hasBackend } from "./backend";
 import { AppBar, StatusBar } from "./components/Chrome";
 import { CommandPalette } from "./components/CommandPalette";
 import { Dialogs } from "./components/Dialogs";
+import { loadRuns } from "./state/runs";
 import {
   loadCurrentProject,
   loadSettings,
@@ -9,6 +11,7 @@ import {
   state,
 } from "./state/store";
 import { AccountsView } from "./views/Accounts";
+import { Agentic } from "./views/Agentic";
 import { Editor } from "./views/Editor";
 import { Parallel } from "./views/Parallel";
 import { SettingsView } from "./views/Settings";
@@ -19,9 +22,13 @@ export function App() {
   onMount(async () => {
     await loadSettings();
     await loadCurrentProject();
+    // For the Agentic badge, before the view is opened.
+    if (hasBackend()) void loadRuns();
   });
   const hasStatusBar = () =>
-    state.view === "editor" || state.view === "parallel";
+    state.view === "editor" ||
+    state.view === "agentic" ||
+    state.view === "parallel";
   return (
     <Show when={settingsReady()}>
       <Show when={state.settings.setupDone} fallback={<Setup />}>
@@ -30,6 +37,9 @@ export function App() {
           <Switch>
             <Match when={state.view === "editor"}>
               <Editor />
+            </Match>
+            <Match when={state.view === "agentic"}>
+              <Agentic />
             </Match>
             <Match when={state.view === "parallel"}>
               <Parallel />

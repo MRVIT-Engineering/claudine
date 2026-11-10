@@ -11,6 +11,7 @@ import {
 import { hasBackend } from "../backend";
 import { Toggle } from "../components/Common";
 import {
+  BoltIcon,
   CloseIcon,
   CodeIcon,
   FilesIcon,
@@ -25,6 +26,7 @@ import { MergeReview } from "../components/MergeReview";
 import { Resizer } from "../components/Resizer";
 import { PREVIEW_CLAUDE } from "../lib/flags";
 import { SETTINGS_PREVIEW } from "../lib/samples";
+import { accounts } from "../state/accounts";
 import {
   ACCENTS,
   DEFAULT_SETTINGS,
@@ -45,7 +47,8 @@ import {
   WIDTHS,
 } from "../state/store";
 import type { Settings, SettingsSection } from "../types";
-import { AccountList, SessionDefaults } from "./Accounts";
+import { SessionDefaults } from "./Accounts";
+import { ClaudeAccountsSection } from "./ClaudeAccounts";
 
 const ALL_SECTIONS: {
   key: SettingsSection;
@@ -60,7 +63,11 @@ const ALL_SECTIONS: {
     key: "accounts",
     label: "Claude accounts",
     icon: () => <UsersIcon />,
-    preview: true,
+  },
+  {
+    key: "agentic",
+    label: "Agentic mode",
+    icon: () => <BoltIcon />,
   },
   {
     key: "sessions",
@@ -71,7 +78,7 @@ const ALL_SECTIONS: {
   { key: "about", label: "About", icon: () => <Mascot size={15} /> },
 ];
 
-// Accounts and session defaults belong to the hidden design preview.
+// Session defaults belong to the hidden design preview.
 const SECTIONS = ALL_SECTIONS.filter(
   (section) => PREVIEW_CLAUDE || !section.preview,
 );
@@ -427,6 +434,223 @@ function EditorSection() {
   );
 }
 
+/** An editable list of commands, one chip each. */
+function CommandList(props: {
+  label: string;
+  placeholder: string;
+  values: string[];
+  empty: string;
+  disabled?: boolean;
+  onChange: (values: string[]) => void;
+}) {
+  const [text, setText] = createSignal("");
+  const add = (event: SubmitEvent) => {
+    event.preventDefault();
+    const value = text().trim();
+    if (!value || props.values.includes(value)) return;
+    props.onChange([...props.values, value]);
+    setText("");
+  };
+  return (
+    <>
+      <ul class="name-chips">
+        <For each={props.values}>
+          {(value) => (
+            <li class="name-chip">
+              <code>{value}</code>
+              <button
+                type="button"
+                class="icon-btn"
+                aria-label={`Remove ${value}`}
+                disabled={props.disabled}
+                onClick={() =>
+                  props.onChange(props.values.filter((v) => v !== value))
+                }
+              >
+                <CloseIcon size={11} />
+              </button>
+            </li>
+          )}
+        </For>
+        <Show when={props.values.length === 0}>
+          <li class="muted">{props.empty}</li>
+        </Show>
+      </ul>
+      <form class="row" onSubmit={add}>
+        <input
+          class="input input-name"
+          aria-label={props.label}
+          placeholder={props.placeholder}
+          disabled={props.disabled}
+          value={text()}
+          onInput={(e) => setText(e.currentTarget.value)}
+        />
+        <button
+          type="submit"
+          class="btn"
+          disabled={props.disabled || !text().trim()}
+        >
+          Add
+        </button>
+      </form>
+    </>
+  );
+}
+
+function NumberSetting(props: {
+  label: string;
+  value: number;
+  max: number;
+  unit: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label class="number-setting">
+      <input
+        class="input input-number"
+        type="number"
+        min="0"
+        max={props.max}
+        aria-label={props.label}
+        value={props.value}
+        onChange={(e) => {
+          const n = Math.round(Number(e.currentTarget.value));
+          props.onChange(
+            Number.isFinite(n) ? Math.min(props.max, Math.max(0, n)) : 0,
+          );
+        }}
+      />
+      <span class="muted">{props.unit}</span>
+    </label>
+  );
+}
+
+function AgenticSection() {
+  const off = () => !state.settings.prePrReview;
+  return (
+    <>
+      <SectionHead
+        title="Agentic mode"
+        text="How runs work: Claude Code on its own, on a branch, then a pre-PR review."
+      />
+      <ToggleRow
+        title="Pre-PR review"
+        text="A finished run waits for your review. Off: it commits straight to its branch."
+        setting="prePrReview"
+      />
+      <SettingRow
+        title="Permissions during a run"
+        text="Pushing, installing packages, deleting files, web access and your deny list always ask."
+      >
+        <Segmented
+          label="Permissions during a run"
+          value={state.settings.runPermissions}
+          options={[
+            { value: "auto", label: "Auto" },
+            { value: "acceptEdits", label: "Accept edits" },
+            { value: "ask", label: "Ask each time" },
+          ]}
+          onChange={(runPermissions) => updateSettings({ runPermissions })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="When you approve"
+        text="Opening a PR pushes the branch and runs gh pr create. It needs the GitHub CLI, signed in."
+      >
+        <Segmented
+          label="When you approve"
+          value={state.settings.onApprove}
+          options={[
+            { value: "pr", label: "Open GitHub PR" },
+            { value: "commit", label: "Commit only" },
+          ]}
+          onChange={(onApprove) => updateSettings({ onApprove })}
+        />
+      </SettingRow>
+      <div classList={{ "is-disabled": off() }}>
+        <ToggleRow
+          title="Explain each file"
+          text="Claude writes a short explanation of every changed file for the review."
+          setting="explainFiles"
+        />
+        <ToggleRow
+          title="Run checks before review"
+          text="Runs the check commands in the run's worktree and shows the results."
+          setting="runChecks"
+        />
+        <div class="setting-block">
+          <strong>Check commands</strong>
+          <span class="muted">
+            Empty: detected from the project (cargo test, npm test, pytest).
+            Commands you add here run only after you confirm them once.
+          </span>
+          <CommandList
+            label="Check command"
+            placeholder="cargo clippy -- -D warnings"
+            values={state.settings.checkCommands}
+            empty="Detected from the project."
+            disabled={off() || !state.settings.runChecks}
+            onChange={(checkCommands) => updateSettings({ checkCommands })}
+          />
+        </div>
+      </div>
+      <ToggleRow
+        title="Separate git worktree per run"
+        text="Each run gets its own folder, so several can work at once while you edit."
+        setting="worktreePerRun"
+      />
+      <SettingRow
+        title="Branch prefix"
+        text="New run branches are named <prefix><task>."
+      >
+        <input
+          class="input input-name"
+          aria-label="Branch prefix"
+          value={state.settings.branchPrefix}
+          onChange={(e) =>
+            updateSettings({ branchPrefix: e.currentTarget.value.trim() })
+          }
+        />
+      </SettingRow>
+      <div class="setting-block">
+        <strong>Deny list</strong>
+        <span class="muted">
+          Commands that always ask, whatever the permissions. Matches the start
+          of the command.
+        </span>
+        <CommandList
+          label="Command that always asks"
+          placeholder="terraform apply"
+          values={state.settings.denyList}
+          empty="Nothing extra."
+          onChange={(denyList) => updateSettings({ denyList })}
+        />
+      </div>
+      <SettingRow
+        title="Limits per run"
+        text="Stop a run after this long, or this many turns. 0 means no limit."
+      >
+        <div class="row">
+          <NumberSetting
+            label="Maximum minutes per run"
+            value={state.settings.maxRunMinutes}
+            max={24 * 60}
+            unit="min"
+            onChange={(maxRunMinutes) => updateSettings({ maxRunMinutes })}
+          />
+          <NumberSetting
+            label="Maximum turns per run"
+            value={state.settings.maxRunTurns}
+            max={1000}
+            unit="turns"
+            onChange={(maxRunTurns) => updateSettings({ maxRunTurns })}
+          />
+        </div>
+      </SettingRow>
+    </>
+  );
+}
+
 function FilesSection() {
   const [name, setName] = createSignal("");
   const problem = () => {
@@ -584,25 +808,6 @@ function AboutSection() {
   );
 }
 
-function AccountsSection() {
-  return (
-    <>
-      <SectionHead
-        title="Claude accounts"
-        text="Each account has its own Claude Code config folder."
-      />
-      <AccountList />
-      <button
-        type="button"
-        class="btn btn-lg reset-btn"
-        onClick={() => navigate("accounts")}
-      >
-        <PlusIcon /> Link account
-      </button>
-    </>
-  );
-}
-
 function SessionsSection() {
   return (
     <>
@@ -644,7 +849,7 @@ export function SettingsView() {
                   <span>{section.label}</span>
                   <Show when={section.key === "accounts"}>
                     <span class="spacer" />
-                    <span class="muted">{state.accounts.length}</span>
+                    <span class="muted">{accounts.list.length || ""}</span>
                   </Show>
                 </button>
               )}
@@ -686,7 +891,10 @@ export function SettingsView() {
               <AboutSection />
             </Match>
             <Match when={state.settingsSection === "accounts"}>
-              <AccountsSection />
+              <ClaudeAccountsSection />
+            </Match>
+            <Match when={state.settingsSection === "agentic"}>
+              <AgenticSection />
             </Match>
             <Match when={state.settingsSection === "sessions"}>
               <SessionsSection />

@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { ChevronDown, ChevronRight, FileIcon } from "../components/Icons";
+import { FileTypeIcon } from "../components/FileTypeIcon";
+import { ChevronDown, ChevronRight } from "../components/Icons";
 import { type SearchResults, searchProject } from "../lib/projectSearch";
 import { fileName, loadSearchTexts, revealMatch, state } from "../state/store";
 
@@ -177,7 +178,7 @@ export function SearchPanel() {
                     </Show>
                   </span>
                   <span class="tree-file">
-                    <FileIcon size={13} />
+                    <FileTypeIcon name={name()} size={14} />
                   </span>
                   <span class="search-file-name">{name()}</span>
                   <span class="search-file-dir">{dir()}</span>

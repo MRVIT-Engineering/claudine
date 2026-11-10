@@ -60,13 +60,14 @@ export interface SourceFile {
   preview?: PreviewLine[];
 }
 
-export type View = "editor" | "parallel" | "accounts" | "settings";
+export type View = "editor" | "agentic" | "parallel" | "accounts" | "settings";
 export type SettingsSection =
   | "appearance"
   | "editor"
   | "files"
   | "about"
   | "accounts"
+  | "agentic"
   | "sessions";
 export type AccentKey =
   | "violet"
@@ -103,6 +104,18 @@ export interface Settings {
   chatWidth: number;
   settingsNavWidth: number;
   setupDone: boolean;
+  // Agentic mode; checked again in settings.rs.
+  prePrReview: boolean;
+  runPermissions: "auto" | "acceptEdits" | "ask";
+  onApprove: "pr" | "commit";
+  explainFiles: boolean;
+  runChecks: boolean;
+  checkCommands: string[];
+  worktreePerRun: boolean;
+  branchPrefix: string;
+  denyList: string[];
+  maxRunMinutes: number;
+  maxRunTurns: number;
 }
 
 /** Options for the hidden design preview. Kept in the browser, not with real settings. */

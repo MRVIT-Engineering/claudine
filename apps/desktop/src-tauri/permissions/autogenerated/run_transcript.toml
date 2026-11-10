@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-transcript"
+description = "Enables the run_transcript command without any pre-configured scope."
+commands.allow = ["run_transcript"]
+
+[[permission]]
+identifier = "deny-run-transcript"
+description = "Denies the run_transcript command without any pre-configured scope."
+commands.deny = ["run_transcript"]

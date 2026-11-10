@@ -20,6 +20,13 @@ pub const SIDEBAR_WIDTHS: (u32, u32) = (160, 600);
 pub const CHAT_WIDTHS: (u32, u32) = (260, 720);
 pub const SETTINGS_NAV_WIDTHS: (u32, u32) = (160, 400);
 const MAX_NAME_LENGTH: usize = 255;
+const MAX_CHECK_COMMANDS: usize = 10;
+const MAX_DENY_RULES: usize = 30;
+const MAX_COMMAND_LENGTH: usize = 300;
+const MAX_PREFIX_LENGTH: usize = 40;
+/// A run can be limited to at most a day, and 1000 turns.
+pub const MAX_RUN_MINUTES: u32 = 24 * 60;
+pub const MAX_RUN_TURNS: u32 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +72,25 @@ pub enum DiffLayout {
     Inline,
 }
 
+/// How much a run may do without asking. Some actions always ask; see `runs.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunPermissions {
+    Auto,
+    AcceptEdits,
+    Ask,
+}
+
+/// What approving a run's review does.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OnApprove {
+    /// Commit, push the branch and open a pull request with `gh`.
+    Pr,
+    /// Commit to the run's branch only.
+    Commit,
+}
+
 /// Every setting the app has. Field names match the TypeScript `Settings` type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 // LEARN: `default` fills any field missing from the file with its value from `Default`.
@@ -95,6 +121,23 @@ pub struct Settings {
     pub chat_width: u32,
     pub settings_nav_width: u32,
     pub setup_done: bool,
+
+    // Agentic mode.
+    /// Finished runs wait for a review. Off: they commit straight to their branch.
+    pub pre_pr_review: bool,
+    pub run_permissions: RunPermissions,
+    pub on_approve: OnApprove,
+    pub explain_files: bool,
+    pub run_checks: bool,
+    /// Commands run in the worktree before review. Empty: detected from the project.
+    pub check_commands: Vec<String>,
+    pub worktree_per_run: bool,
+    pub branch_prefix: String,
+    /// Commands that always ask during a run, such as `terraform apply`.
+    pub deny_list: Vec<String>,
+    /// 0 means no limit.
+    pub max_run_minutes: u32,
+    pub max_run_turns: u32,
 }
 
 // LEARN: `Default` is the trait for "the value to use when nothing else is given".
@@ -102,7 +145,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             theme: Theme::Dark,
-            accent: Accent::Violet,
+            accent: Accent::Coral,
             font_size: 13,
             editor_font: EditorFont::Jetbrains,
             ligatures: true,
@@ -127,6 +170,17 @@ impl Default for Settings {
             chat_width: 320,
             settings_nav_width: 210,
             setup_done: false,
+            pre_pr_review: true,
+            run_permissions: RunPermissions::Auto,
+            on_approve: OnApprove::Pr,
+            explain_files: true,
+            run_checks: true,
+            check_commands: Vec::new(),
+            worktree_per_run: true,
+            branch_prefix: "claudine/".to_string(),
+            deny_list: Vec::new(),
+            max_run_minutes: 0,
+            max_run_turns: 0,
         }
     }
 }
@@ -162,8 +216,47 @@ impl Settings {
             }
         }
         self.excluded_names = names;
+
+        self.check_commands = clean_commands(self.check_commands, MAX_CHECK_COMMANDS);
+        // `)` would end the permission rule the command goes into.
+        self.deny_list = clean_commands(self.deny_list, MAX_DENY_RULES)
+            .into_iter()
+            .filter(|rule| !rule.contains(')'))
+            .collect();
+        if !valid_prefix(&self.branch_prefix) {
+            self.branch_prefix = Settings::default().branch_prefix;
+        }
+        self.max_run_minutes = self.max_run_minutes.min(MAX_RUN_MINUTES);
+        self.max_run_turns = self.max_run_turns.min(MAX_RUN_TURNS);
         self
     }
+}
+
+/// One command per line: trimmed, no control characters, no duplicates.
+fn clean_commands(list: Vec<String>, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for command in list {
+        let command = command.trim().to_string();
+        let usable = !command.is_empty()
+            && command.len() <= MAX_COMMAND_LENGTH
+            && !command.chars().any(char::is_control);
+        if usable && !out.contains(&command) && out.len() < max {
+            out.push(command);
+        }
+    }
+    out
+}
+
+/// Letters, digits, `.`, `_`, `-` and `/`, so `<prefix><slug>` is a plain branch name.
+/// `git check-ref-format` checks the full name again before a branch is made.
+fn valid_prefix(prefix: &str) -> bool {
+    prefix.len() <= MAX_PREFIX_LENGTH
+        && !prefix.starts_with(['-', '/', '.'])
+        && !prefix.contains("..")
+        && !prefix.contains("//")
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c))
 }
 
 /// Reads the settings file. A missing file gives the defaults. A file that can't be
@@ -188,10 +281,16 @@ pub fn load(path: &Path) -> (Settings, bool) {
 /// Writes the settings to a temp file, then renames it into place. A rename is atomic,
 /// so a crash leaves either the old file or the new one, never half of one.
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
+    let text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
+    write_atomic(path, &text)
+}
+
+/// Writes `text` to a temp file next to `path`, then renames it into place. Only for the
+/// app's own files in its config folder, never project files.
+pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder)?;
     }
-    let text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, text)?;
     fs::rename(&temp, path)
@@ -216,6 +315,14 @@ impl SettingsState {
         SettingsState {
             path,
             current: Mutex::new(Current { settings, existed }),
+        }
+    }
+
+    /// A copy of the current settings.
+    pub fn current(&self) -> Settings {
+        match self.current.lock() {
+            Ok(current) => current.settings.clone(),
+            Err(_) => Settings::default(),
         }
     }
 
@@ -374,5 +481,28 @@ mod tests {
         }
         .sanitized();
         assert_eq!(settings.excluded_names.len(), MAX_EXCLUDED);
+    }
+
+    #[test]
+    fn agentic_settings_are_cleaned_up() {
+        let settings = Settings {
+            branch_prefix: "../evil".to_string(),
+            check_commands: vec![
+                " cargo test ".to_string(),
+                "cargo test".to_string(),
+                "rm -rf /\nls".to_string(),
+                String::new(),
+            ],
+            deny_list: vec!["terraform apply".to_string(), "x) Bash(*".to_string()],
+            max_run_minutes: 1_000_000,
+            ..Settings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.branch_prefix, "claudine/");
+        assert_eq!(settings.check_commands, vec!["cargo test".to_string()]);
+        assert_eq!(settings.deny_list, vec!["terraform apply".to_string()]);
+        assert_eq!(settings.max_run_minutes, MAX_RUN_MINUTES);
+        assert!(valid_prefix("agents/claude-"));
+        assert!(!valid_prefix("-x"));
     }
 }

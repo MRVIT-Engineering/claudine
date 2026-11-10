@@ -1,10 +1,15 @@
 // Stops Windows from opening a console next to the app in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
+mod claude;
 mod error;
 mod files;
+mod git;
 mod project;
+mod runs;
 mod settings;
+mod trust;
 
 use tauri::Manager;
 
@@ -20,11 +25,24 @@ fn main() {
         // Used only from Rust. The webview has no `dialog:*` permission.
         .plugin(tauri_plugin_dialog::init())
         .manage(project::ProjectState::default())
+        .manage(claude::SessionState::default())
         // LEARN: `setup` returns `Result<(), Box<dyn Error>>`, so `?` works for any error type.
         .setup(|app| {
             // Per user: ~/Library/Application Support/<identifier>/ on macOS.
             let path = app.path().app_config_dir()?.join("settings.json");
             app.manage(settings::SettingsState::load(path));
+            let trusted = app.path().app_config_dir()?.join("trusted-projects.json");
+            app.manage(trust::TrustState::load(trusted));
+            let accounts = app.path().app_config_dir()?.join("accounts.json");
+            let folders = app.path().app_data_dir()?.join("accounts");
+            app.manage(accounts::AccountsState::load(accounts, folders));
+            let runs = runs::RunsState::load(&app.path().app_data_dir()?);
+            runs.set_app(app.handle().clone());
+            let handle = app.handle().clone();
+            runs.watch_limits(std::sync::Arc::new(move || {
+                handle.state::<settings::SettingsState>().current()
+            }));
+            app.manage(runs);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -36,6 +54,42 @@ fn main() {
             project::list_files,
             settings::get_settings,
             settings::set_settings,
+            claude::claude_status,
+            claude::start_session,
+            claude::send_message,
+            claude::answer_permission,
+            claude::interrupt_session,
+            claude::stop_session,
+            claude::set_mode,
+            claude::set_model,
+            accounts::list_accounts,
+            accounts::add_account,
+            accounts::update_account,
+            accounts::remove_account,
+            accounts::account_status,
+            accounts::sign_in,
+            accounts::submit_sign_in_code,
+            accounts::cancel_sign_in,
+            accounts::sign_out,
+            runs::new_run_info,
+            runs::start_run,
+            runs::list_runs,
+            runs::watch_runs,
+            runs::run_transcript,
+            runs::send_run_message,
+            runs::answer_run_permission,
+            runs::stop_run,
+            runs::resume_run,
+            runs::review_run_now,
+            runs::run_changes,
+            runs::add_run_comment,
+            runs::delete_run_comment,
+            runs::set_run_viewed,
+            runs::request_run_changes,
+            runs::gh_status,
+            runs::approve_run,
+            runs::discard_run,
+            runs::open_run_in_editor,
         ])
         .run(tauri::generate_context!())
         // LEARN: `expect` crashes with this message on `Err`; there's nothing to recover to here.

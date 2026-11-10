@@ -26,6 +26,7 @@ import type {
   TranscriptItem,
   View,
 } from "../types";
+import { resetClaude } from "./claude";
 
 export const ACCOUNT_COLORS: AccountColor[] = [
   "blue",
@@ -76,7 +77,7 @@ export const WIDTHS = {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
-  accent: "violet",
+  accent: "coral",
   fontSize: 13,
   editorFont: "jetbrains",
   ligatures: true,
@@ -99,6 +100,17 @@ export const DEFAULT_SETTINGS: Settings = {
   chatWidth: 320,
   settingsNavWidth: 210,
   setupDone: false,
+  prePrReview: true,
+  runPermissions: "auto",
+  onApprove: "pr",
+  explainFiles: true,
+  runChecks: true,
+  checkCommands: [],
+  worktreePerRun: true,
+  branchPrefix: "claudine/",
+  denyList: [],
+  maxRunMinutes: 0,
+  maxRunTurns: 0,
 };
 
 const DEFAULT_PREVIEW: PreviewSettings = {
@@ -203,7 +215,29 @@ function parseSettings(raw: unknown): Settings {
       d.settingsNavWidth,
     ),
     setupDone: bool("setupDone"),
+    prePrReview: bool("prePrReview"),
+    runPermissions: pick(
+      s.runPermissions,
+      ["auto", "acceptEdits", "ask"],
+      d.runPermissions,
+    ),
+    onApprove: pick(s.onApprove, ["pr", "commit"], d.onApprove),
+    explainFiles: bool("explainFiles"),
+    runChecks: bool("runChecks"),
+    checkCommands: strings(s.checkCommands, d.checkCommands),
+    worktreePerRun: bool("worktreePerRun"),
+    branchPrefix:
+      typeof s.branchPrefix === "string" ? s.branchPrefix : d.branchPrefix,
+    denyList: strings(s.denyList, d.denyList),
+    maxRunMinutes: clampNumber(s.maxRunMinutes, 0, 24 * 60, d.maxRunMinutes),
+    maxRunTurns: clampNumber(s.maxRunTurns, 0, 1000, d.maxRunTurns),
   };
+}
+
+function strings(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : fallback;
 }
 
 /** Settings saved by an earlier version in the browser, or `null` if there are none. */
@@ -214,9 +248,9 @@ function legacySettings(): Settings | null {
     ...legacy.settings,
     setupDone: legacy.setupDone === true,
   });
-  // Version 1 saved coral as the default. Move those to Claudine's purple.
+  // Version 1 saved coral as the default; keep what those users actually saw then.
   if (legacy.version !== LEGACY_VERSION && settings.accent === "coral") {
-    settings.accent = DEFAULT_SETTINGS.accent;
+    settings.accent = "violet";
   }
   return settings;
 }
@@ -365,6 +399,7 @@ function applyHash() {
     setState("view", "editor");
   } else if (
     view === "editor" ||
+    view === "agentic" ||
     view === "parallel" ||
     view === "accounts" ||
     view === "settings"
@@ -377,6 +412,7 @@ function applyHash() {
     section === "files" ||
     section === "about" ||
     section === "accounts" ||
+    section === "agentic" ||
     section === "sessions"
   ) {
     setState("settingsSection", section);
@@ -519,6 +555,18 @@ export function navigate(view: View, section?: SettingsSection) {
 
 export function updateSettings(patch: Partial<Settings>) {
   setState("settings", patch);
+}
+
+/** Cmd+= and Cmd+-: one pixel at a time, within the limits. 0 resets to the default. */
+export function stepFontSize(step: number) {
+  const size =
+    step === 0
+      ? DEFAULT_SETTINGS.fontSize
+      : Math.min(
+          MAX_FONT_SIZE,
+          Math.max(MIN_FONT_SIZE, state.settings.fontSize + step),
+        );
+  if (size !== state.settings.fontSize) updateSettings({ fontSize: size });
 }
 
 export function updatePreview(patch: Partial<PreviewSettings>) {
@@ -712,7 +760,26 @@ function reloadTree() {
   void refreshFileList();
 }
 
+/**
+ * Re-reads what Claude may have changed: the tree, and open files without unsaved edits.
+ * `paths` limits it to those files; `"all"` is for commands, which can touch anything.
+ */
+export function filesChangedOnDisk(paths: string[] | "all") {
+  if (!state.project) return;
+  searchCache.clear();
+  void loadDir("");
+  for (const path of state.expanded) void loadDir(path);
+  void refreshFileList();
+  for (const path of state.openTabs) {
+    if (state.dirty[path] || !state.files[path]) continue;
+    if (paths !== "all" && !paths.includes(path)) continue;
+    buffers.delete(path);
+    void loadFile(path);
+  }
+}
+
 function projectOpened(project: ProjectInfo) {
+  resetClaude();
   buffers.clear();
   searchCache.clear();
   setState(

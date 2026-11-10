@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch } from "solid-js";
 import { languageName } from "../lib/codemirror";
 import { PREVIEW_CLAUDE } from "../lib/flags";
+import { toReviewCount } from "../state/runs";
 import {
   accountOf,
   conflictingFiles,
@@ -13,6 +14,7 @@ import {
   updateSettings,
 } from "../state/store";
 import type { View } from "../types";
+import { NewRunButton } from "../views/Agentic";
 import { openPalette } from "./CommandPalette";
 import { STATUS_WORD } from "./Common";
 import { findMatches } from "./FindPanel";
@@ -21,6 +23,7 @@ import { Mascot } from "./Mascot";
 
 const ALL_TABS: { view: View; label: string; preview?: boolean }[] = [
   { view: "editor", label: "Editor" },
+  { view: "agentic", label: "Agentic" },
   { view: "parallel", label: "Parallel", preview: true },
   { view: "accounts", label: "Accounts", preview: true },
   { view: "settings", label: "Settings" },
@@ -38,7 +41,9 @@ export function Brand() {
 
 export function AppBar() {
   const workspaceView = () =>
-    state.view === "editor" || state.view === "parallel";
+    state.view === "editor" ||
+    state.view === "agentic" ||
+    state.view === "parallel";
   return (
     <header class="appbar">
       <Brand />
@@ -56,6 +61,14 @@ export function AppBar() {
               onClick={() => navigate(tab.view)}
             >
               {tab.label}
+              <Show when={tab.view === "agentic" && toReviewCount() > 0}>
+                <span
+                  class="count-badge accent"
+                  title={`${toReviewCount()} to review`}
+                >
+                  {toReviewCount()}
+                </span>
+              </Show>
             </button>
           )}
         </For>
@@ -82,6 +95,9 @@ export function AppBar() {
             >
               New session
             </button>
+          </Match>
+          <Match when={state.view === "agentic"}>
+            <NewRunButton />
           </Match>
           <Match when={state.view === "parallel"}>
             <span class="muted appbar-note">
@@ -136,9 +152,26 @@ export function StatusBar() {
   };
   return (
     <footer class="statusbar">
+      <Show when={state.view === "agentic"}>
+        <span>
+          Agentic mode ·{" "}
+          {
+            {
+              auto: "Auto mode",
+              acceptEdits: "Accept edits",
+              ask: "Ask each time",
+            }[state.settings.runPermissions]
+          }
+        </span>
+        <span>Pre-PR review {state.settings.prePrReview ? "on" : "off"}</span>
+      </Show>
       <Show
         when={state.view === "editor"}
-        fallback={<span>{conflictNote()}</span>}
+        fallback={
+          <Show when={state.view === "parallel"}>
+            <span>{conflictNote()}</span>
+          </Show>
+        }
       >
         <Show when={state.activeTab}>
           <span>{languageName(state.activeTab)}</span>

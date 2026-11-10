@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-run-comment"
+description = "Enables the delete_run_comment command without any pre-configured scope."
+commands.allow = ["delete_run_comment"]
+
+[[permission]]
+identifier = "deny-delete-run-comment"
+description = "Denies the delete_run_comment command without any pre-configured scope."
+commands.deny = ["delete_run_comment"]

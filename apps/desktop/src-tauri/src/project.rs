@@ -1,10 +1,12 @@
 //! The open project, and the commands that read it.
 
+use crate::claude::SessionState;
 use crate::error::CommandError;
 use crate::files::{self, DirEntry, FileList};
 use crate::settings::SettingsState;
 use my_editor_core::path_guard::ProjectRoot;
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -12,6 +14,9 @@ use tauri_plugin_dialog::DialogExt;
 pub struct Project {
     root: ProjectRoot,
     name: String,
+    /// Canonical, for `claude`'s working folder and the trust list. Never sent to the
+    /// webview, and never used to reach project files: those go through `root`.
+    path: PathBuf,
 }
 
 /// The project open in the app, if any. Commands can run on several threads at once.
@@ -28,6 +33,17 @@ pub struct ProjectInfo {
 fn info(project: &Project) -> ProjectInfo {
     ProjectInfo {
         name: project.name.clone(),
+    }
+}
+
+impl ProjectState {
+    /// The open project's name and canonical folder, for starting `claude` there.
+    pub fn name_and_path(&self) -> Result<(String, PathBuf), CommandError> {
+        let current = self.0.lock().map_err(|_| CommandError::Internal)?;
+        let Some(project) = current.as_ref() else {
+            return Err(CommandError::NoProject);
+        };
+        Ok((project.name.clone(), project.path.clone()))
     }
 }
 
@@ -48,6 +64,7 @@ pub fn current_project(
 pub fn open_project(
     app: AppHandle,
     state: State<'_, ProjectState>,
+    sessions: State<'_, SessionState>,
 ) -> Result<Option<ProjectInfo>, CommandError> {
     let picked = app
         .dialog()
@@ -63,18 +80,35 @@ pub fn open_project(
         return Err(CommandError::InvalidPath);
     };
 
-    let root = ProjectRoot::open(path)?;
+    // Resolves symlinks and `..`, so the trust list has one spelling per folder.
+    let path = path.canonicalize()?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("/"));
-    let project = Project { root, name };
-    let opened = info(&project);
+    state.open_folder(&path, name, &sessions).map(Some)
+}
 
-    let mut current = state.0.lock().map_err(|_| CommandError::Internal)?;
-    // `*` writes through the lock guard into the value it protects.
-    *current = Some(project);
-    Ok(Some(opened))
+impl ProjectState {
+    /// Makes `path` the open project. Only for folders Rust chose: the native picker's
+    /// answer, or a run's own worktree.
+    pub fn open_folder(
+        &self,
+        path: &Path,
+        name: String,
+        sessions: &SessionState,
+    ) -> Result<ProjectInfo, CommandError> {
+        let path = path.canonicalize()?;
+        let root = ProjectRoot::open(&path)?;
+        let project = Project { root, name, path };
+        let opened = info(&project);
+        let mut current = self.0.lock().map_err(|_| CommandError::Internal)?;
+        // `*` writes through the lock guard into the value it protects.
+        *current = Some(project);
+        // A session keeps running in the folder it started in, so end it with the project.
+        sessions.stop();
+        Ok(opened)
+    }
 }
 
 #[tauri::command(async)]

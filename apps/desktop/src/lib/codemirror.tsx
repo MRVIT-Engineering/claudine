@@ -60,7 +60,7 @@ const theme = EditorView.theme({
   },
   ".cm-content": { caretColor: "var(--text)", padding: "0" },
   ".cm-gutters": {
-    backgroundColor: "var(--bg)",
+    backgroundColor: "var(--editor)",
     color: "var(--muted)",
     border: "none",
   },
@@ -68,8 +68,29 @@ const theme = EditorView.theme({
     minWidth: "3em",
     padding: "0 0.8em 0 0",
   },
-  ".cm-activeLine": { backgroundColor: "var(--hover)" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--hover)" },
+  // Change bar (lib/changeGutter.ts).
+  ".cm-change-gutter .cm-gutterElement": {
+    width: "3px",
+    marginRight: "4px",
+    position: "relative",
+  },
+  ".cm-change-gutter .cm-change-add": {
+    backgroundColor: "var(--add-ink) !important",
+  },
+  ".cm-change-gutter .cm-change-change": {
+    backgroundColor: "var(--blue) !important",
+  },
+  ".cm-change-gutter .cm-change-del::before": {
+    content: '""',
+    position: "absolute",
+    top: "-4px",
+    left: "0",
+    borderTop: "4px solid transparent",
+    borderBottom: "4px solid transparent",
+    borderLeft: "5px solid var(--del-ink)",
+  },
+  ".cm-activeLine": { backgroundColor: "var(--editor-line)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--editor-line)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
     { backgroundColor: "var(--selection)" },
@@ -391,6 +412,33 @@ export async function loadLanguage(path: string): Promise<Extension> {
 
 export function languageName(path: string): string {
   return describe(path)?.name ?? "Plain text";
+}
+
+/** Colors single lines of `path`'s language, for diffs shown outside an editor. */
+export async function lineHighlighter(
+  path: string,
+): Promise<((line: string) => JSX.Element) | null> {
+  const description = describe(path);
+  if (!description) return null;
+  try {
+    const support = await description.load();
+    const parser = support.language.parser;
+    return (line: string) => {
+      const parts: JSX.Element[] = [];
+      highlightCode(
+        line,
+        parser.parse(line),
+        tokenHighlighter,
+        (text, classes) => {
+          parts.push(classes ? <span class={classes}>{text}</span> : text);
+        },
+        () => {},
+      );
+      return parts;
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Syntax colors for code shown outside an editor, using the same parser and classes.
