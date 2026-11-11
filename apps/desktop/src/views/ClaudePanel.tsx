@@ -3,32 +3,45 @@ import {
   createSignal,
   For,
   Match,
+  onCleanup,
   onMount,
   Show,
   Switch,
 } from "solid-js";
+import type { Effort } from "../backend";
+import { ChatInput } from "../components/ChatInput";
 import { AccountBadge, Empty } from "../components/Common";
-import { Dropdown } from "../components/Dropdown";
-import { ArrowUp, CloseIcon } from "../components/Icons";
+import { previewImage } from "../components/ImagePreview";
 import { MarkdownText } from "../components/MarkdownPreview";
 import { Mascot } from "../components/Mascot";
+import { ProposedDiff } from "../components/ProposedDiff";
 import { Working } from "../components/Working";
-import { accountById, accounts, startSignIn } from "../state/accounts";
+import { drawThumbnail } from "../lib/images";
+import { effortOptions } from "../lib/modes";
+import { registerPermissionKeys } from "../lib/permissionKeys";
+import {
+  accountById,
+  accounts,
+  loadAccounts,
+  startSignIn,
+} from "../state/accounts";
 import {
   answerPermission,
+  autoStartClaude,
+  autoStartPending,
   type ChatEntry,
   checkClaudeInstalled,
   claude,
-  cycleMode,
   interruptClaude,
   MODES,
   type PermissionRequest,
   sendToClaude,
+  setEffort,
   setMode,
   setModel,
   startClaude,
   stopClaude,
-  toggleClaudePanel,
+  switchAccount,
 } from "../state/claude";
 import { openFile, state } from "../state/store";
 import { AccountPicker, SignInBox } from "./ClaudeAccounts";
@@ -98,6 +111,29 @@ export function Entry(props: { entry: ChatEntry; queued?: boolean }) {
           class="chat-user claude-prose"
           classList={{ "is-queued": props.queued }}
         >
+          <Show when={entry.images}>
+            {(images) => (
+              <span class="chat-images">
+                <For each={images()}>
+                  {(blob, index) => (
+                    <button
+                      type="button"
+                      class="composer-image"
+                      title="Preview"
+                      aria-label={`Preview image ${index() + 1}`}
+                      onClick={() => previewImage(blob)}
+                    >
+                      <canvas
+                        width={96}
+                        height={96}
+                        ref={(canvas) => void drawThumbnail(canvas, blob)}
+                      />
+                    </button>
+                  )}
+                </For>
+              </span>
+            )}
+          </Show>
           {entry.text}
           <Show when={props.queued}>
             <span class="queued-note">
@@ -124,6 +160,7 @@ export function PermissionPrompt(props: {
     props.onAnswer
       ? props.onAnswer(props.request.id, allow)
       : void answerPermission(props.request.id, allow);
+  onCleanup(registerPermissionKeys(reply));
   return (
     <div
       class="permission claude-permission"
@@ -137,141 +174,113 @@ export function PermissionPrompt(props: {
       <Show when={props.request.outside}>
         <span class="claude-warning">This is outside the open folder.</span>
       </Show>
-      <Show when={props.request.detail}>
-        <pre class="claude-permission-detail">{props.request.detail}</pre>
+      <Show
+        when={props.request.proposal}
+        fallback={
+          <Show when={props.request.detail}>
+            <pre class="claude-permission-detail">{props.request.detail}</pre>
+          </Show>
+        }
+      >
+        {(proposal) => (
+          <div class="claude-permission-detail claude-permission-diff">
+            <ProposedDiff proposal={proposal()} compact />
+          </div>
+        )}
       </Show>
       <div class="row">
-        <button type="button" class="btn btn-sm" onClick={() => reply(false)}>
-          Deny
+        <button
+          type="button"
+          class="btn btn-sm"
+          title="Deny (⇧N)"
+          onClick={() => reply(false)}
+        >
+          Deny <kbd>⇧N</kbd>
         </button>
         <button
           type="button"
           class="btn btn-sm btn-accent"
+          title="Allow (⇧↵)"
           onClick={() => reply(true)}
         >
-          Allow
+          Allow <kbd>⇧↵</kbd>
         </button>
       </div>
     </div>
   );
 }
 
-function ModePicker() {
-  const current = () => MODES.find((m) => m.value === claude.mode);
+function Composer() {
+  const working = () => claude.status === "working";
+  const modelTitle = () =>
+    [
+      claude.models.find((m) => m.value === claude.modelChoice)?.description,
+      claude.model,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   return (
-    <Dropdown
-      label="Mode"
-      up
-      class="mode-picker"
-      classes={{
-        "mode-accept": claude.mode === "acceptEdits",
-        "mode-plan": claude.mode === "plan",
+    <ChatInput
+      autofocus
+      placeholder={working() ? "Queue another message…" : "Ask Claude…"}
+      images
+      onSend={sendToClaude}
+      account={{
+        value: accounts.selected,
+        title: working()
+          ? "Finish or stop this turn to switch accounts."
+          : "Switching accounts starts a new conversation.",
+        options: accounts.list.map((account) => ({
+          value: account.id,
+          label: account.label,
+          icon: <span class={`dot acct-dot acct-${account.color}`} />,
+        })),
+        onChange: (id) => {
+          if (!working()) switchAccount(id);
+        },
       }}
-      title={`${current()?.hint ?? `Claude Code's mode: ${claude.mode}`} Shift+Tab switches.`}
-      value={claude.mode}
-      options={MODES.map((m) => ({
-        value: m.value,
-        label: m.label,
-        hint: m.hint,
-      }))}
-      onChange={(value) => {
+      onEscape={working() ? () => void interruptClaude() : undefined}
+      onStop={working() ? () => void interruptClaude() : undefined}
+      mode={{
+        value: claude.mode,
+        title: MODES.find((m) => m.value === claude.mode)?.hint,
         // `claude.mode` is a string, since Claude Code can report modes Claudine
         // doesn't offer; only the offered ones are in the list.
-        const mode = MODES.find((m) => m.value === value);
-        if (mode) void setMode(mode.value);
+        options: MODES.map((m) => ({
+          value: m.value,
+          label: m.label,
+          hint: m.hint,
+        })),
+        onChange: (value) => {
+          const mode = MODES.find((m) => m.value === value);
+          if (mode) void setMode(mode.value);
+        },
       }}
-    />
-  );
-}
-
-function ModelPicker() {
-  const description = () =>
-    claude.models.find((m) => m.value === claude.modelChoice)?.description;
-  return (
-    <Show when={claude.models.length > 0}>
-      <Dropdown
-        label="Model"
-        up
-        class="model-picker"
-        title={[description(), claude.model].filter(Boolean).join(" · ")}
-        value={claude.modelChoice}
-        options={claude.models.map((m) => ({
+      model={{
+        value: claude.modelChoice,
+        title: modelTitle(),
+        options: claude.models.map((m) => ({
           value: m.value,
           label: m.name,
           hint: m.description,
-        }))}
-        onChange={(model) => void setModel(model)}
-      />
-    </Show>
-  );
-}
-
-function Composer() {
-  const [text, setText] = createSignal("");
-  let input!: HTMLTextAreaElement;
-  const working = () => claude.status === "working";
-
-  const submit = async () => {
-    const message = text();
-    if (!message.trim()) return;
-    if (await sendToClaude(message)) setText("");
-  };
-
-  onMount(() => input.focus());
-
-  return (
-    <form
-      class="composer"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
+        })),
+        onChange: (model) => void setModel(model),
       }}
-    >
-      <textarea
-        ref={input}
-        aria-label="Message Claude"
-        placeholder={working() ? "Queue another message…" : "Ask Claude…"}
-        rows="2"
-        value={text()}
-        onInput={(e) => setText(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-            e.preventDefault();
-            void submit();
-          } else if (e.key === "Escape" && working()) {
-            e.preventDefault();
-            void interruptClaude();
-          } else if (e.key === "Tab" && e.shiftKey) {
-            // Like the terminal: Shift+Tab cycles the mode.
-            e.preventDefault();
-            cycleMode();
-          }
-        }}
-      />
-      <div class="composer-row">
-        <ModePicker />
-        <ModelPicker />
-        <Show when={working()}>
-          <button
-            type="button"
-            class="composer-btn"
-            title="Stop this turn (Esc)"
-            onClick={() => void interruptClaude()}
-          >
-            Stop
-          </button>
-        </Show>
-        <span class="spacer" />
-        <button
-          type="submit"
-          class="send-btn"
-          aria-label="Send"
-          disabled={!text().trim()}
-        >
-          <ArrowUp />
-        </button>
-      </div>
-    </form>
+      effort={{
+        value: claude.effort ?? "default",
+        title: working()
+          ? "Changing it waits until this turn ends."
+          : "Changing it restarts Claude Code and keeps the conversation.",
+        options: working()
+          ? []
+          : effortOptions(
+              claude.models.find((m) => m.value === claude.modelChoice)
+                ?.efforts ?? [],
+            ),
+        onChange: (value) =>
+          void setEffort(value === "default" ? null : (value as Effort)),
+      }}
+    />
   );
 }
 
@@ -316,6 +325,12 @@ function StartScreen() {
           >
             Check again
           </button>
+        </Empty>
+      </Match>
+      <Match when={claude.status === "starting" || autoStartPending()}>
+        <Empty title="Starting Claude Code…">
+          With {accountById(accounts.selected)?.label ?? "your account"}. You
+          can switch accounts in the chat input.
         </Empty>
       </Match>
       <Match when={true}>
@@ -363,7 +378,10 @@ export function ClaudePanel() {
 
   onMount(() => {
     if (claude.found === null) void checkClaudeInstalled();
+    if (!accounts.loaded) void loadAccounts();
   });
+  // No start step: the session starts with the last used account once it's known.
+  createEffect(autoStartClaude);
 
   createEffect(() => {
     claude.entries.length;
@@ -374,7 +392,7 @@ export function ClaudePanel() {
   });
 
   return (
-    <aside class="chat claude-panel" aria-label="Claude">
+    <section class="chat claude-panel" aria-label="Claude">
       <div class="chat-tabs claude-head">
         <Mascot size={16} />
         <strong>Claude</strong>
@@ -411,14 +429,6 @@ export function ClaudePanel() {
             End
           </button>
         </Show>
-        <button
-          type="button"
-          class="icon-btn"
-          aria-label="Hide Claude panel"
-          onClick={toggleClaudePanel}
-        >
-          <CloseIcon />
-        </button>
       </div>
       <div class="chat-scroll" ref={scroller}>
         <For each={claude.entries}>{(entry) => <Entry entry={entry} />}</For>
@@ -437,6 +447,6 @@ export function ClaudePanel() {
       <Show when={live()}>
         <Composer />
       </Show>
-    </aside>
+    </section>
   );
 }

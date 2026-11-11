@@ -10,6 +10,12 @@ fn main() {
         "current_project",
         "list_dir",
         "read_file",
+        "save_file",
+        "blame_line",
+        "git_log",
+        "git_commit_files",
+        "git_status",
+        "git_diff",
         "list_files",
         "get_settings",
         "set_settings",
@@ -21,6 +27,8 @@ fn main() {
         "stop_session",
         "set_mode",
         "set_model",
+        "set_effort",
+        "list_models",
         "list_accounts",
         "add_account",
         "update_account",
@@ -49,6 +57,7 @@ fn main() {
         "approve_run",
         "discard_run",
         "open_run_in_editor",
+        "set_run_options",
     ]);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);
     tauri_build::try_build(attributes).expect("tauri-build failed");

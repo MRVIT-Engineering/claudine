@@ -136,6 +136,20 @@ export const SunIcon = (p: IconProps) => (
     <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
   </Svg>
 );
+export const GitIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <circle cx="6" cy="5" r="2" />
+    <circle cx="6" cy="19" r="2" />
+    <circle cx="18" cy="8" r="2" />
+    <path d="M6 7v10M18 10c0 4-6 3-12 7" />
+  </Svg>
+);
+export const EyeIcon = (p: IconProps) => (
+  <Svg size={p.size}>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
 export const FolderOpenIcon = (p: IconProps) => (
   <Svg size={p.size}>
     <path d="M3 7a2 2 0 0 1 2-2h4l2 3h7a2 2 0 0 1 2 2v1" />

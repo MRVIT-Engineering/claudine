@@ -1899,7 +1899,11 @@ dependencies = [
 name = "my-editor-desktop"
 version = "0.1.0"
 dependencies = [
+ "cap-std",
  "my-editor-core",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",

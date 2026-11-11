@@ -2,13 +2,19 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "The UI may read the open project, the user's settings, and manage Claude accounts talk to the Claude session Rust runs, and manage Agentic runs, through these commands and nothing else.",
-  "windows": ["main"],
+  "windows": ["main", "project-*"],
   "permissions": [
     "allow-app-version",
     "allow-open-project",
     "allow-current-project",
     "allow-list-dir",
     "allow-read-file",
+    "allow-save-file",
+    "allow-blame-line",
+    "allow-git-log",
+    "allow-git-commit-files",
+    "allow-git-status",
+    "allow-git-diff",
     "allow-list-files",
     "allow-get-settings",
     "allow-set-settings",
@@ -20,6 +26,8 @@
     "allow-stop-session",
     "allow-set-mode",
     "allow-set-model",
+    "allow-set-effort",
+    "allow-list-models",
     "allow-list-accounts",
     "allow-add-account",
     "allow-update-account",
@@ -47,6 +55,7 @@
     "allow-gh-status",
     "allow-approve-run",
     "allow-discard-run",
-    "allow-open-run-in-editor"
+    "allow-open-run-in-editor",
+    "allow-set-run-options"
   ]
 }

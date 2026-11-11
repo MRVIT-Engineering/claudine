@@ -1,15 +1,20 @@
 import { createSignal, For, Show } from "solid-js";
 import {
+  conflictPath,
   createSession,
   defaultAccountId,
   dialog,
+  fileName,
   navigate,
   openProjectFolder,
+  reloadFromDisk,
+  saveFile,
   sendMessage,
   setDialog,
   state,
 } from "../state/store";
 import { Modal } from "./Common";
+import { ImagePreview } from "./ImagePreview";
 
 function NewSessionDialog() {
   const signedIn = () => state.accounts.filter((a) => a.signedIn);
@@ -129,8 +134,8 @@ function DiscardChangesDialog() {
     <Modal title="Discard unsaved changes?" onClose={() => setDialog(null)}>
       <div ref={body} class="modal-body">
         <p>
-          Opening another folder closes this one. Saving isn't built yet, so
-          your unsaved edits will be lost.
+          Opening another folder closes this one, and your unsaved edits will be
+          lost. Save them first with ⌘S.
         </p>
         <div class="row end">
           <button type="button" class="btn" onClick={close}>
@@ -152,9 +157,57 @@ function DiscardChangesDialog() {
   );
 }
 
+function SaveConflictDialog() {
+  let body!: HTMLDivElement;
+  const close = () => body.closest("dialog")?.close();
+  const path = () => conflictPath() ?? "";
+  return (
+    <Modal
+      title={`${fileName(path())} changed on disk`}
+      onClose={() => setDialog(null)}
+    >
+      <div ref={body} class="modal-body">
+        <p>
+          Something outside Claudine changed this file since you opened it.
+          Saving now would replace that change with yours.
+        </p>
+        <div class="row end">
+          <button type="button" class="btn" onClick={close}>
+            Keep editing
+          </button>
+          <button
+            type="button"
+            class="btn"
+            onClick={() => {
+              close();
+              reloadFromDisk(path());
+            }}
+          >
+            Reload and lose my edits
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger-solid"
+            onClick={() => {
+              close();
+              void saveFile(path(), true);
+            }}
+          >
+            Overwrite
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function Dialogs() {
   return (
     <>
+      <ImagePreview />
+      <Show when={dialog() === "save-conflict"}>
+        <SaveConflictDialog />
+      </Show>
       <Show when={dialog() === "discard-changes"}>
         <DiscardChangesDialog />
       </Show>

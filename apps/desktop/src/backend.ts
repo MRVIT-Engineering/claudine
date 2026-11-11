@@ -17,6 +17,7 @@ export type CommandError =
   | { kind: "isADirectory" }
   | { kind: "tooLarge" }
   | { kind: "notText" }
+  | { kind: "conflict" }
   | { kind: "io"; detail: string }
   | { kind: "internal" }
   | { kind: "claudeNotFound" }
@@ -33,6 +34,20 @@ export type CommandError =
   | { kind: "wrongState" }
   | { kind: "cancelled" }
   | { kind: "unavailable" };
+
+/** A file before and after Claude's Write or Edit. Mirrors `Proposal` in proposal.rs. */
+/** An image for the Editor chat: its type and base64 text. Rust checks both. */
+export interface PastedImage {
+  mediaType: string;
+  data: string;
+}
+
+export interface Proposal {
+  /** Relative to the project. */
+  path: string;
+  before: string;
+  after: string;
+}
 
 /** Mirrors `SessionEvent` in apps/desktop/src-tauri/src/claude.rs. */
 export type SessionEvent =
@@ -53,6 +68,7 @@ export type SessionEvent =
       summary: string;
       detail: string;
       outside: boolean;
+      proposal: Proposal | null;
     }
   | { kind: "permissionClosed"; id: string }
   | {
@@ -88,7 +104,14 @@ export type RunState =
   | "paused"
   | "interrupted";
 
-export type RunPermissions = "auto" | "acceptEdits" | "ask";
+export type RunPermissions = "auto" | "acceptEdits" | "plan" | "ask";
+
+/** A run's mode and model. Left out, Rust keeps the setting or the current one. */
+export interface RunOptions {
+  mode?: RunPermissions;
+  model?: string;
+  effort?: Effort;
+}
 
 export interface RunComment {
   id: string;
@@ -120,6 +143,37 @@ export interface PendingPermission {
   summary: string;
   detail: string;
   outside: boolean;
+}
+
+/** A commit, for the Git panel. */
+export interface GitCommit {
+  id: string;
+  short: string;
+  author: string;
+  isYou: boolean;
+  time: number;
+  subject: string;
+}
+
+/** A changed file. `status` is git's letter: M, A, D, R, or ? for untracked. */
+export interface GitChange {
+  path: string;
+  status: string;
+}
+
+/** One line's last change. `commit` is empty when the line isn't committed yet. */
+export interface Blame {
+  commit: string;
+  author: string;
+  isYou: boolean;
+  time: number;
+  summary: string;
+}
+
+/** A file's text and version: a hash Rust checks again when saving. */
+export interface FileText {
+  text: string;
+  version: string;
 }
 
 export interface Run {
@@ -155,6 +209,12 @@ export interface Run {
   queued: number;
   permissions: PendingPermission[];
   hasPrevious: boolean;
+  /** `null` for runs from before modes were chosen per run: they use the setting. */
+  mode: RunPermissions | null;
+  /** `null` is the account's default model. */
+  model: string | null;
+  /** `null` is Claude Code's default effort. */
+  effort: Effort | null;
 }
 
 export type RunUpdate =
@@ -203,7 +263,12 @@ export interface ModelOption {
   value: string;
   name: string;
   description: string;
+  /** The effort levels this model takes; empty when it has none. */
+  efforts: Effort[];
 }
+
+/** Claude Code's effort levels, as `--effort` takes them. */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** The modes Claudine offers; Rust refuses any other. */
 export type PermissionMode = "default" | "acceptEdits" | "plan";
@@ -282,7 +347,21 @@ export const backend = {
   openProject: () => call<ProjectInfo | null>("open_project"),
   /** One folder's entries; `null` for the project root. */
   listDir: (path: string | null) => call<DirEntry[]>("list_dir", { path }),
-  readFile: (path: string) => call<string>("read_file", { path }),
+  readFile: (path: string) => call<FileText>("read_file", { path }),
+  /** Recent commits: the folder's, or one file's when `path` is given. */
+  gitLog: (path: string | null) => call<GitCommit[]>("git_log", { path }),
+  gitCommitFiles: (commit: string) =>
+    call<GitChange[]>("git_commit_files", { commit }),
+  gitStatus: () => call<GitChange[]>("git_status"),
+  /** A file in `commit`, or from the last commit to disk when `commit` is null. */
+  gitDiff: (commit: string | null, path: string) =>
+    call<Proposal>("git_diff", { commit, path }),
+  /** `text` is the buffer when it has unsaved edits, so line numbers match. */
+  blameLine: (path: string, line: number, text: string | null) =>
+    call<Blame | null>("blame_line", { path, line, text }),
+  /** Returns the new version. `expectedVersion` null overwrites changes made on disk. */
+  saveFile: (path: string, text: string, expectedVersion: string | null) =>
+    call<string>("save_file", { path, text, expectedVersion }),
   listFiles: () => call<FileList>("list_files"),
   /** `existed` is false until a settings file has been saved for this user. */
   getSettings: () =>
@@ -295,12 +374,25 @@ export const backend = {
    * Starts `claude` in the open project. The first time for a folder, Rust asks
    * natively whether to trust it. Events arrive on `onEvent` until it exits.
    */
-  startSession: (account: string, onEvent: (event: SessionEvent) => void) => {
+  startSession: (
+    account: string,
+    effort: Effort | null,
+    onEvent: (event: SessionEvent) => void,
+  ) => {
     const channel = new Channel<SessionEvent>();
     channel.onmessage = onEvent;
-    return call<void>("start_session", { account, onEvent: channel });
+    return call<void>("start_session", { account, effort, onEvent: channel });
   },
-  sendMessage: (text: string) => call<void>("send_message", { text }),
+  /** Restarts the session with `--resume` and the new effort; the conversation carries on. */
+  setEffort: (effort: Effort) => call<void>("set_effort", { effort }),
+  /** The account's models. The first call starts `claude` briefly, outside any project. */
+  listModels: (account: string) =>
+    call<ModelOption[]>("list_models", { account }),
+  sendMessage: (text: string, images: PastedImage[] = []) =>
+    call<void>("send_message", {
+      text,
+      images: images.map(({ mediaType, data }) => ({ mediaType, data })),
+    }),
   /** Only an id and a yes or no: Rust runs the tool input it kept. */
   answerPermission: (id: string, allow: boolean) =>
     call<void>("answer_permission", { id, allow }),
@@ -337,8 +429,14 @@ export const backend = {
 
   newRunInfo: () => call<NewRunInfo>("new_run_info"),
   /** Makes the branch and worktree and starts Claude there. Rust checks every value. */
-  startRun: (account: string, task: string, base: string) =>
-    call<Run>("start_run", { account, task, base }),
+  startRun: (
+    account: string,
+    task: string,
+    base: string,
+    options: RunOptions,
+  ) => call<Run>("start_run", { account, task, base, options }),
+  setRunOptions: (id: string, options: RunOptions) =>
+    call<null>("set_run_options", { id, options }),
   listRuns: () => call<Run[]>("list_runs"),
   /** Run updates arrive on `onUpdate`; a new call replaces the old listener. */
   watchRuns: (onUpdate: (update: RunUpdate) => void) => {
@@ -398,7 +496,7 @@ export function describeError(error: CommandError): string {
     case "protected":
       return "This path can't be changed.";
     case "needsConfirmation":
-      return "Changing this path needs confirmation.";
+      return "Saving .claude/ and .mcp.json files from Claudine isn't supported yet, because they can run commands.";
     case "throughSymlink":
       return "Can't write through a symlink.";
     case "notFound":
@@ -413,6 +511,8 @@ export function describeError(error: CommandError): string {
       return "This file is larger than 5 MB, so it isn't opened.";
     case "notText":
       return "This looks like a binary file, so it can't be shown.";
+    case "conflict":
+      return "The file changed on disk since you opened it.";
     case "io":
       return `Couldn't read this: ${error.detail}.`;
     case "internal":

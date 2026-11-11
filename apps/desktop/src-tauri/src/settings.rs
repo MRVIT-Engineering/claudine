@@ -19,6 +19,7 @@ const MAX_EXCLUDED: usize = 64;
 pub const SIDEBAR_WIDTHS: (u32, u32) = (160, 600);
 pub const CHAT_WIDTHS: (u32, u32) = (260, 720);
 pub const SETTINGS_NAV_WIDTHS: (u32, u32) = (160, 400);
+pub const RUNS_WIDTHS: (u32, u32) = (200, 600);
 const MAX_NAME_LENGTH: usize = 255;
 const MAX_CHECK_COMMANDS: usize = 10;
 const MAX_DENY_RULES: usize = 30;
@@ -78,6 +79,8 @@ pub enum DiffLayout {
 pub enum RunPermissions {
     Auto,
     AcceptEdits,
+    /// Claude plans first; leaving plan mode asks the user.
+    Plan,
     Ask,
 }
 
@@ -120,6 +123,9 @@ pub struct Settings {
     pub sidebar_width: u32,
     pub chat_width: u32,
     pub settings_nav_width: u32,
+    /// The Agentic tab's runs list, and its file tree on the right.
+    pub runs_width: u32,
+    pub run_files_width: u32,
     pub setup_done: bool,
 
     // Agentic mode.
@@ -169,6 +175,8 @@ impl Default for Settings {
             sidebar_width: 240,
             chat_width: 320,
             settings_nav_width: 210,
+            runs_width: 300,
+            run_files_width: 240,
             setup_done: false,
             pre_pr_review: true,
             run_permissions: RunPermissions::Auto,
@@ -196,6 +204,10 @@ impl Settings {
         self.settings_nav_width = self
             .settings_nav_width
             .clamp(SETTINGS_NAV_WIDTHS.0, SETTINGS_NAV_WIDTHS.1);
+        self.runs_width = self.runs_width.clamp(RUNS_WIDTHS.0, RUNS_WIDTHS.1);
+        self.run_files_width = self
+            .run_files_width
+            .clamp(SIDEBAR_WIDTHS.0, SIDEBAR_WIDTHS.1);
         self.line_height = if self.line_height.is_finite() {
             self.line_height.clamp(1.0, 2.5)
         } else {
@@ -450,6 +462,7 @@ mod tests {
             line_height: f64::NAN,
             sidebar_width: 5,
             chat_width: 10_000,
+            runs_width: 0,
             ..Settings::default()
         }
         .sanitized();
@@ -458,6 +471,7 @@ mod tests {
         assert_eq!(settings.line_height, Settings::default().line_height);
         assert_eq!(settings.sidebar_width, SIDEBAR_WIDTHS.0);
         assert_eq!(settings.chat_width, CHAT_WIDTHS.1);
+        assert_eq!(settings.runs_width, RUNS_WIDTHS.0);
     }
 
     #[test]

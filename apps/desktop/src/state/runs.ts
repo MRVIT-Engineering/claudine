@@ -6,9 +6,11 @@ import {
   describeError,
   type FileDiff,
   isCommandError,
+  type ModelOption,
   type NewRunInfo,
   type Run,
   type RunChanges,
+  type RunOptions,
   type RunUpdate,
   type SessionEvent,
 } from "../backend";
@@ -38,6 +40,8 @@ interface RunsStore {
   sinceLast: Record<string, boolean>;
   error: string | null;
   busy: Record<string, boolean>;
+  /** Each account's models, as its `claude` lists them. */
+  models: Record<string, ModelOption[]>;
 }
 
 const [runs, setRuns] = createStore<RunsStore>({
@@ -52,6 +56,7 @@ const [runs, setRuns] = createStore<RunsStore>({
   sinceLast: {},
   error: null,
   busy: {},
+  models: {},
 });
 
 export { runs };
@@ -266,6 +271,21 @@ export function toggleSinceLast(id: string) {
   setRuns("sinceLast", id, (on) => !on);
 }
 
+const askedModels = new Set<string>();
+
+/** Asks Rust for an account's models once; the pickers show aliases until they arrive. */
+export async function loadModels(account: string) {
+  if (askedModels.has(account)) return;
+  askedModels.add(account);
+  try {
+    const models = await backend.listModels(account);
+    if (models.length > 0) setRuns("models", account, models);
+  } catch {
+    // The aliases still work.
+    askedModels.delete(account);
+  }
+}
+
 export async function startNewRun() {
   setRuns(
     produce((s) => {
@@ -288,10 +308,11 @@ export async function createRun(
   account: string,
   task: string,
   base: string,
+  options: RunOptions,
 ): Promise<boolean> {
   setRuns("busy", "new", true);
   try {
-    const run = await backend.startRun(account, task, base);
+    const run = await backend.startRun(account, task, base, options);
     upsert(run);
     setRuns("transcripts", run.id, []);
     await openRun(run.id);
@@ -334,6 +355,9 @@ export const answerRunPermission = (
   request: string,
   allow: boolean,
 ) => act(id, () => backend.answerRunPermission(id, request, allow));
+/** Switches a run's mode or model; a working run switches at once. */
+export const setRunOptions = (id: string, options: RunOptions) =>
+  act(id, () => backend.setRunOptions(id, options));
 export const stopRun = (id: string) => act(id, () => backend.stopRun(id));
 export const resumeRun = (id: string) => act(id, () => backend.resumeRun(id));
 export const reviewRunNow = (id: string) =>

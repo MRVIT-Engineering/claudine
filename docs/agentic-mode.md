@@ -66,6 +66,7 @@ Nothing from inside an account's config folder is read or stored.
 ## Security
 
 - **Auto mode only in runs.** Editor mode still offers only ask, accept edits and plan.
+- **Mode and model per run.** The new-run input and a run's input pick auto, accept edits, plan or manual, and a model. Settings › Agentic only sets the default for new runs. The mode starts as `--permission-mode`; the model and any later change go to `claude` as `set_model` and `set_permission_mode` control messages. Rust accepts only the four modes, and model names of letters, digits and `-._[]`, at most 64 characters.
   A run works in its own worktree, and these always ask, in every mode: `git push`,
   package installs, `rm`, `WebFetch` and `WebSearch`, and every command on the user's
   deny list.

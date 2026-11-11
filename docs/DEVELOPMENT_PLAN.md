@@ -2,7 +2,7 @@
 
 How Claudine goes from a mock UI to a real, usable editor.
 
-**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel, with mode and model switching (Later, step 2), on any of several Claude accounts (Later, step 5). Markdown files have a preview. Agentic mode runs Claude on its own on a branch and worktree, with a pre-PR review (see `docs/agentic-mode.md`). Next: Milestone 5, saving.
+**Status:** Milestones 0 to 4 are done: Claudine opens a real folder, browses it and shows its files. A first Claude session runs in a real chat panel, with mode and model switching (Later, step 2), on any of several Claude accounts (Later, step 5). Markdown files have a preview. Agentic mode runs Claude on its own on a branch and worktree, with a pre-PR review (see `docs/agentic-mode.md`). Milestone 5, saving, is mostly done. Next: the rest of it, then Milestone 6.
 
 ## The first goal: a usable editor
 
@@ -157,7 +157,7 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 - **Extra command:** `list_files`, which lists every file for Go to file and project search. It's capped at 20,000 files and doesn't follow symlinked folders.
 - **Not remembered on restart:** the open folder isn't remembered when the app restarts. That's recent projects, in Milestone 7.
 
-### Milestone 5: Edit and save (L, you) - the riskiest milestone
+### Milestone 5: Edit and save (L, you) - the riskiest milestone (mostly done, written by Claude in explain mode)
 
 - **Atomic write:** write to a temp file in the same folder, flush it, then rename over the original. A crash mid-save must never leave a half-written file.
 - **Conflict check:** hash the file on read and return that as its version. On save, hash the file on disk again, and return `Conflict` if it differs from `expected_version`. `DefaultHasher` from std is fine because this detects changes, not attacks.
@@ -166,6 +166,8 @@ let text = project.dir().read_to_string(path.as_path())?;  // always through dir
 - In the UI, make Cmd+S real, clear the unsaved dot on save, and offer **Overwrite**, **Reload** or **Keep editing** on a conflict. Warn before closing a window with unsaved changes.
 
 **Done when:** you can edit a file, save it, and see the change in another tool. Editing the file elsewhere and then saving shows the conflict choice instead of overwriting.
+
+**Built:** `save_file` with the atomic write, the version check, kept permissions and a refusal through symlinks; Cmd+S and a Save command; the unsaved dot and change bar clear on save; Overwrite, Reload or Keep editing on a conflict. **Still open:** the warning before closing a window with unsaved changes, and the native confirmation to save `.claude/` and `.mcp.json` (refused for now).
 
 **Rust you'll meet:** temp files, `Hash`, working with permissions, integration-style tests.
 

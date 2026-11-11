@@ -1,5 +1,5 @@
 import { createEffect, createRoot, createSignal } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import {
   backend,
   type CommandError,
@@ -9,7 +9,8 @@ import {
   isCommandError,
   type ProjectInfo,
 } from "../backend";
-import { buffers } from "../lib/buffers";
+import { buffers, views } from "../lib/buffers";
+import { markSaved } from "../lib/changeGutter";
 import { PREVIEW_CLAUDE } from "../lib/flags";
 import { DEMO_ACCOUNTS, demoSessions, PROPOSALS } from "../mock/data";
 import type {
@@ -27,6 +28,18 @@ import type {
   View,
 } from "../types";
 import { resetClaude } from "./claude";
+import { closeGitDiff, refreshGit, resetGit } from "./git";
+import {
+  allGroups,
+  findGroup,
+  groupWithTab,
+  type Layout,
+  newGroup,
+  placeTab,
+  removeTab,
+  type Side,
+  splitWith,
+} from "./groups";
 
 export const ACCOUNT_COLORS: AccountColor[] = [
   "blue",
@@ -73,6 +86,8 @@ export const WIDTHS = {
   sidebarWidth: [160, 600],
   chatWidth: [260, 720],
   settingsNavWidth: [160, 400],
+  runsWidth: [200, 600],
+  runFilesWidth: [160, 600],
 } as const;
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -99,6 +114,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarWidth: 240,
   chatWidth: 320,
   settingsNavWidth: 210,
+  runsWidth: 300,
+  runFilesWidth: 240,
   setupDone: false,
   prePrReview: true,
   runPermissions: "auto",
@@ -214,11 +231,17 @@ function parseSettings(raw: unknown): Settings {
       ...WIDTHS.settingsNavWidth,
       d.settingsNavWidth,
     ),
+    runsWidth: clampNumber(s.runsWidth, ...WIDTHS.runsWidth, d.runsWidth),
+    runFilesWidth: clampNumber(
+      s.runFilesWidth,
+      ...WIDTHS.runFilesWidth,
+      d.runFilesWidth,
+    ),
     setupDone: bool("setupDone"),
     prePrReview: bool("prePrReview"),
     runPermissions: pick(
       s.runPermissions,
-      ["auto", "acceptEdits", "ask"],
+      ["auto", "acceptEdits", "plan", "ask"],
       d.runPermissions,
     ),
     onApprove: pick(s.onApprove, ["pr", "commit"], d.onApprove),
@@ -333,14 +356,19 @@ interface AppState {
   /** File contents by path, as last read from disk. */
   files: Record<string, Loadable<string>>;
   fileList: FileList | null;
-  openTabs: string[];
+  /** The editor's tab groups. */
+  layout: Layout;
+  /** The group that has focus; the palette, ⌘S and new tabs act on it. */
+  activeGroup: string;
+  /** The focused group's shown tab. */
   activeTab: string;
-  sidebar: "explorer" | "search";
+  sidebar: "explorer" | "search" | "git";
   decisions: Record<string, Decision>;
   dirty: Record<string, boolean>;
 }
 
 const initialSessions = sessionsFor(saved.accounts);
+const firstGroup = newGroup();
 
 const [state, setState] = createStore<AppState>({
   view: "editor",
@@ -355,7 +383,8 @@ const [state, setState] = createStore<AppState>({
   expanded: [],
   files: {},
   fileList: null,
-  openTabs: [],
+  layout: firstGroup,
+  activeGroup: firstGroup.id,
   activeTab: "",
   sidebar: "explorer",
   decisions: {},
@@ -387,7 +416,7 @@ const [reveal, setReveal] = createSignal<Reveal | null>(null);
 export { reveal, setReveal };
 
 const [dialog, setDialog] = createSignal<
-  "new-session" | "broadcast" | "discard-changes" | null
+  "new-session" | "broadcast" | "discard-changes" | "save-conflict" | null
 >(null);
 
 export { composerFocus, dialog, setDialog };
@@ -509,6 +538,8 @@ createRoot(() => {
     root.style.setProperty("--sidebar-width", `${s.sidebarWidth}px`);
     root.style.setProperty("--chat-width", `${s.chatWidth}px`);
     root.style.setProperty("--settings-nav-width", `${s.settingsNavWidth}px`);
+    root.style.setProperty("--runs-width", `${s.runsWidth}px`);
+    root.style.setProperty("--run-files-width", `${s.runFilesWidth}px`);
     const font = EDITOR_FONTS.find((f) => f.key === s.editorFont);
     if (font) root.style.setProperty("--font-code", font.stack);
   });
@@ -700,13 +731,63 @@ export function restartSetup() {
   buffers.clear();
 }
 
+/** The Claude chat's tab. A NUL can't be in a file name, so no file can have this path. */
+export const CHAT_TAB = "\u0000claude";
+
+/** The active tab's file, or "" when no file tab is active (none, or the chat). */
+export function activeFile(): string {
+  return state.activeTab === CHAT_TAB ? "" : state.activeTab;
+}
+
+/** Every open tab, in every group. */
+export function openTabs(): string[] {
+  return allGroups(state.layout).flatMap((g) => g.tabs);
+}
+
+/** The layout as plain objects, for the functions in `groups.ts`. */
+const layout = () => unwrap(state.layout);
+
+/** Puts in a new layout, keeping the groups that didn't change, and focuses `focus`. */
+function setLayout(next: Layout, focus = state.activeGroup) {
+  const group = findGroup(next, focus) ?? allGroups(next)[0];
+  setState("layout", reconcile(next, { key: "id" }));
+  setState({ activeGroup: group?.id ?? "", activeTab: group?.active ?? "" });
+}
+
+/** Gives a group focus, as clicking in it does. */
+export function focusGroup(id: string) {
+  if (id === state.activeGroup) return;
+  const group = findGroup(layout(), id);
+  if (group) setState({ activeGroup: id, activeTab: group.active });
+}
+
+/** Shows a tab: in its group when it's open, else as a new tab in the focused group. */
+function showTab(tab: string) {
+  closeGitDiff();
+  const group = groupWithTab(layout(), tab);
+  const target = group?.id ?? state.activeGroup;
+  const index = group ? group.tabs.indexOf(tab) : undefined;
+  setLayout(placeTab(layout(), target, tab, index), target);
+}
+
+/** Moves a dragged tab into a group's tab bar, at `index` (the end by default). */
+export function moveTab(tab: string, groupId: string, index?: number) {
+  setLayout(placeTab(layout(), groupId, tab, index), groupId);
+}
+
+/** Moves a dragged tab into a new group on `side` of the group `groupId`. */
+export function splitTab(tab: string, groupId: string, side: Side) {
+  const split = splitWith(layout(), groupId, side, tab);
+  setLayout(split.layout, split.id);
+}
+
+/** Opens the Claude chat as a tab, after the open ones, and shows it. */
+export function openChatTab() {
+  showTab(CHAT_TAB);
+}
+
 export function openFile(path: string) {
-  setState(
-    produce((s) => {
-      if (!s.openTabs.includes(path)) s.openTabs.push(path);
-      s.activeTab = path;
-    }),
-  );
+  showTab(path);
   const loaded = state.files[path];
   if (!loaded || loaded.status === "error") void loadFile(path);
 }
@@ -714,8 +795,9 @@ export function openFile(path: string) {
 async function loadFile(path: string) {
   setState("files", path, { status: "loading" });
   try {
-    const text = await backend.readFile(path);
-    setState("files", path, { status: "ready", value: text });
+    const file = await backend.readFile(path);
+    versions.set(path, file.version);
+    setState("files", path, { status: "ready", value: file.text });
   } catch (error) {
     setState("files", path, { status: "error", error: asError(error) });
   }
@@ -766,11 +848,12 @@ function reloadTree() {
  */
 export function filesChangedOnDisk(paths: string[] | "all") {
   if (!state.project) return;
+  if (state.sidebar === "git") void refreshGit();
   searchCache.clear();
   void loadDir("");
   for (const path of state.expanded) void loadDir(path);
   void refreshFileList();
-  for (const path of state.openTabs) {
+  for (const path of openTabs()) {
     if (state.dirty[path] || !state.files[path]) continue;
     if (paths !== "all" && !paths.includes(path)) continue;
     buffers.delete(path);
@@ -780,6 +863,7 @@ export function filesChangedOnDisk(paths: string[] | "all") {
 
 function projectOpened(project: ProjectInfo) {
   resetClaude();
+  resetGit();
   buffers.clear();
   searchCache.clear();
   setState(
@@ -789,11 +873,11 @@ function projectOpened(project: ProjectInfo) {
       s.expanded = [];
       s.files = {};
       s.fileList = null;
-      s.openTabs = [];
-      s.activeTab = "";
+      // The chat starts open, as its own tab.
       s.dirty = {};
     }),
   );
+  setLayout(newGroup([CHAT_TAB]), "");
   void loadDir("");
   void refreshFileList();
 }
@@ -850,6 +934,74 @@ export function setDirty(path: string, dirty: boolean) {
   setState("dirty", path, dirty);
 }
 
+// Each open file's version from Rust, a hash of what was read or last saved. Saving sends it
+// back, so Rust can refuse when the file changed on disk in the meantime.
+const versions = new Map<string, string>();
+
+const [saveProblem, setSaveProblem] = createSignal<{
+  path: string;
+  error: CommandError;
+} | null>(null);
+/** The file whose save found a change made outside Claudine. */
+const [conflictPath, setConflictPath] = createSignal<string | null>(null);
+
+export { conflictPath, saveProblem };
+
+function currentDoc(path: string) {
+  return views.get(path)?.state.doc ?? buffers.get(path)?.state.doc;
+}
+
+/**
+ * Saves an open file through Rust. `overwrite` skips the check for changes made on disk,
+ * after the user chose Overwrite.
+ */
+export async function saveFile(path: string, overwrite = false) {
+  const doc = currentDoc(path);
+  // Never edited: nothing to save.
+  if (!doc || !state.dirty[path]) return;
+  const text = doc.toString();
+  try {
+    const expected = overwrite ? null : (versions.get(path) ?? null);
+    const version = await backend.saveFile(path, text, expected);
+    versions.set(path, version);
+    setState("files", path, { status: "ready", value: text });
+    setSaveProblem(null);
+    if (state.sidebar === "git") void refreshGit();
+    // Typing during the save keeps the file unsaved, with its change bar.
+    if (currentDoc(path)?.toString() !== text) return;
+    setDirty(path, false);
+    const view = views.get(path);
+    const buffer = buffers.get(path);
+    if (view) view.dispatch({ effects: markSaved.of(null) });
+    else if (buffer) {
+      const saved = buffer.state.update({ effects: markSaved.of(null) }).state;
+      buffers.set(path, { ...buffer, state: saved });
+    }
+  } catch (error) {
+    if (isCommandError(error) && error.kind === "conflict") {
+      setConflictPath(path);
+      setDialog("save-conflict");
+    } else {
+      setSaveProblem({ path, error: asError(error) });
+    }
+  }
+}
+
+export function saveActiveFile() {
+  if (state.view === "editor" && activeFile()) {
+    void saveFile(activeFile());
+  }
+}
+
+/** Drops the edits to `path` and shows the file as it is on disk now. */
+export function reloadFromDisk(path: string) {
+  setDirty(path, false);
+  // Unmounts the editor first, which keeps its state in `buffers`; then that's dropped.
+  setState("files", path, { status: "loading" });
+  buffers.delete(path);
+  void loadFile(path);
+}
+
 // The file's text after review: accepted hunks applied, everything else original.
 export function resolvedText(path: string): string {
   const file = PROPOSALS[path];
@@ -864,7 +1016,7 @@ export function resolvedText(path: string): string {
     .join("\n");
 }
 
-export function showSidebar(sidebar: "explorer" | "search") {
+export function showSidebar(sidebar: "explorer" | "search" | "git") {
   setState("sidebar", sidebar);
 }
 
@@ -894,7 +1046,7 @@ export async function loadSearchTexts(): Promise<{
     await Promise.all(
       missing.slice(i, i + 16).map(async (path) => {
         try {
-          searchCache.set(path, await backend.readFile(path));
+          searchCache.set(path, (await backend.readFile(path)).text);
         } catch {
           searchCache.set(path, null);
         }
@@ -938,16 +1090,8 @@ export function projectTexts(): Map<string, string> {
 }
 
 export function closeTab(path: string) {
-  setState(
-    produce((s) => {
-      const index = s.openTabs.indexOf(path);
-      if (index === -1) return;
-      s.openTabs.splice(index, 1);
-      if (s.activeTab === path) {
-        s.activeTab = s.openTabs[Math.max(0, index - 1)] ?? "";
-      }
-    }),
-  );
+  // A closed group's focus goes to the first group left.
+  setLayout(removeTab(layout(), path));
 }
 
 export function toggleFolder(path: string) {
@@ -960,6 +1104,14 @@ export function toggleFolder(path: string) {
   );
   // Reload on every expand, so changes made outside the app show up.
   if (state.expanded.includes(path)) void loadDir(path);
+}
+
+/** Expands every folder above `path`, so its row shows in the tree. Never collapses. */
+export function revealInTree(path: string) {
+  const parts = path.split("/").slice(0, -1);
+  const folders = parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+  const missing = folders.filter((f) => !state.expanded.includes(f));
+  if (missing.length > 0) setState("expanded", (e) => [...e, ...missing]);
 }
 
 export function selectSession(id: string) {

@@ -16,8 +16,15 @@ tauri-build.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 my-editor-core.workspace = true
+cap-std.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# LEARN: dependencies under a target table are built only for that platform.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
 
 [lints]
 workspace = true

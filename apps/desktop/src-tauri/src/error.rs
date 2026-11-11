@@ -25,6 +25,8 @@ pub enum CommandError {
     IsADirectory,
     TooLarge,
     NotText,
+    /// The file changed on disk since it was opened, so saving would overwrite that change.
+    Conflict,
     Io {
         detail: String,
     },

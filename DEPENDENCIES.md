@@ -6,11 +6,14 @@ Every direct dependency, with the reason it's here.
 
 | Crate | Version | Used by | Reason |
 |---|---|---|---|
-| `cap-std` | 3.4.6 | `crates/core` | Opens files relative to a directory handle, so paths can't escape the project, even in a symlink race. |
+| `cap-std` | 3.4.6 | `crates/core`, `apps/desktop/src-tauri` | Opens files relative to a directory handle, so paths can't escape the project, even in a symlink race. The app uses its `OpenOptions` to save through the guard's handle. |
 | `serde` | 1.0.229 | `crates/protocol` | Derives serialization for messages between the hook and the app. |
 | `serde_json` | 1.0.154 | `crates/protocol`, `apps/desktop/src-tauri` | JSON wire format for hook messages, and the settings file. |
 | `tauri` | 2.12.5 | `apps/desktop/src-tauri` | Desktop app framework: window, webview, IPC. |
 | `tauri-plugin-dialog` | 2.8.4 | `apps/desktop/src-tauri` | Native folder picker, called only from Rust. The webview has no `dialog:*` permission. |
+| `objc2` | 0.6.5 | `apps/desktop/src-tauri` (macOS) | `MainThreadMarker`, the proof that AppKit is called from the main thread. Already built by Tauri. |
+| `objc2-foundation` | 0.3.2 | `apps/desktop/src-tauri` (macOS) | `NSURL` for a folder, to hand to AppKit. Only the `NSURL` and `NSString` features. Already built by Tauri. |
+| `objc2-app-kit` | 0.3.2 | `apps/desktop/src-tauri` (macOS) | `NSDocumentController`, which adds opened folders to the Dock menu's recent list. Tauri has no API for it. Only the `NSDocumentController` feature. Already built by Tauri. |
 | `tauri-build` | 2.7.4 | `apps/desktop/src-tauri` (build) | Compiles the config, capabilities and command permissions at build time. |
 
 ## npm

@@ -1,7 +1,7 @@
-// Which open Markdown files show their preview instead of the editor. Per tab, for
-// this run of the app only.
+// Which open Markdown files show their preview instead of the editor. On unless the
+// user turned it off for that tab, for this run of the app only.
 import { createStore } from "solid-js/store";
-import { state } from "./store";
+import { activeFile } from "./store";
 
 export const PREVIEW_KEYS = /Mac|iPhone|iPad/.test(navigator.userAgent)
   ? "⇧⌘V"
@@ -14,7 +14,7 @@ export function isMarkdown(path: string): boolean {
 }
 
 export function isPreviewing(path: string): boolean {
-  return isMarkdown(path) && previewing[path] === true;
+  return isMarkdown(path) && previewing[path] !== false;
 }
 
 export function setMarkdownPreview(path: string, on: boolean) {
@@ -23,6 +23,6 @@ export function setMarkdownPreview(path: string, on: boolean) {
 
 /** Flips the active tab between its code and its preview. */
 export function toggleMarkdownPreview() {
-  const path = state.activeTab;
-  if (path && isMarkdown(path)) setPreviewing(path, !previewing[path]);
+  const path = activeFile();
+  if (path && isMarkdown(path)) setPreviewing(path, !isPreviewing(path));
 }

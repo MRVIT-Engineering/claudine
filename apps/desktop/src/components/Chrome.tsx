@@ -1,13 +1,17 @@
 import { For, Match, Show, Switch } from "solid-js";
+import { describeError } from "../backend";
 import { languageName } from "../lib/codemirror";
 import { PREVIEW_CLAUDE } from "../lib/flags";
+import { runModeLabel } from "../lib/modes";
 import { toReviewCount } from "../state/runs";
 import {
   accountOf,
+  activeFile,
   conflictingFiles,
   cursor,
   navigate,
   proposalFor,
+  saveProblem,
   saveStatus,
   setDialog,
   state,
@@ -154,14 +158,7 @@ export function StatusBar() {
     <footer class="statusbar">
       <Show when={state.view === "agentic"}>
         <span>
-          Agentic mode ·{" "}
-          {
-            {
-              auto: "Auto mode",
-              acceptEdits: "Accept edits",
-              ask: "Ask each time",
-            }[state.settings.runPermissions]
-          }
+          Agentic mode · New runs: {runModeLabel(state.settings.runPermissions)}
         </span>
         <span>Pre-PR review {state.settings.prePrReview ? "on" : "off"}</span>
       </Show>
@@ -173,10 +170,10 @@ export function StatusBar() {
           </Show>
         }
       >
-        <Show when={state.activeTab}>
-          <span>{languageName(state.activeTab)}</span>
+        <Show when={activeFile()}>
+          <span>{languageName(activeFile())}</span>
         </Show>
-        <Show when={proposalFor(state.activeTab)}>
+        <Show when={proposalFor(activeFile())}>
           <button
             type="button"
             class="status-btn"
@@ -212,10 +209,23 @@ export function StatusBar() {
           {state.settings.tabSize}
         </span>
       </Show>
-      <Show when={state.view === "editor" && state.dirty[state.activeTab]}>
-        <span class="status-unsaved">
-          Unsaved · saving needs the Rust backend
-        </span>
+      <Show
+        when={
+          state.view === "editor" &&
+          saveProblem()?.path === activeFile() &&
+          saveProblem()
+        }
+        fallback={
+          <Show when={state.view === "editor" && state.dirty[activeFile()]}>
+            <span class="status-unsaved">Unsaved · ⌘S saves</span>
+          </Show>
+        }
+      >
+        {(problem) => (
+          <span class="status-unsaved">
+            Not saved: {describeError(problem().error)}
+          </span>
+        )}
       </Show>
       <Show when={state.view === "editor" && findMatches()?.total}>
         <span>

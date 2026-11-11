@@ -103,10 +103,12 @@ export interface Settings {
   sidebarWidth: number;
   chatWidth: number;
   settingsNavWidth: number;
+  runsWidth: number;
+  runFilesWidth: number;
   setupDone: boolean;
   // Agentic mode; checked again in settings.rs.
   prePrReview: boolean;
-  runPermissions: "auto" | "acceptEdits" | "ask";
+  runPermissions: "auto" | "acceptEdits" | "plan" | "ask";
   onApprove: "pr" | "commit";
   explainFiles: boolean;
   runChecks: boolean;
