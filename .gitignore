@@ -40,3 +40,6 @@ $RECYCLE.BIN/
 apps/website/.next/
 apps/website/out/
 apps/website/next-env.d.ts
+
+# Wrangler local state
+apps/website/.wrangler/

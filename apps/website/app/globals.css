@@ -1137,7 +1137,7 @@ h2 {
 }
 
 @media (max-width: 640px) {
-  .nav nav {
+  .nav nav a:not(.nav-cta) {
     display: none;
   }
 
@@ -2012,4 +2012,38 @@ h2 {
 .branches svg {
   max-width: 720px;
   margin: 0 auto;
+}
+
+/* GitHub links */
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+}
+
+.btn svg {
+  margin-right: 8px;
+}
+
+.cta-btn {
+  margin-top: 28px;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+}
+
+.footer-links a {
+  color: var(--text-2);
+  transition: color 0.2s;
+}
+
+.footer-links a:hover {
+  color: var(--text);
 }

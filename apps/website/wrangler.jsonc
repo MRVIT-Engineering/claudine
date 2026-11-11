@@ -1,0 +1,23 @@
+// The website as a Worker that serves only static files: `next build` writes them to
+// out/, and Cloudflare serves them as they are. There's no Worker script, so no code
+// runs on Cloudflare. Deployed by .github/workflows/website.yml.
+{
+  "name": "claudine-website",
+  "compatibility_date": "2026-11-11",
+  "assets": {
+    "directory": "./out",
+    // Next's export writes 404.html; unknown paths get it with a 404 status.
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  },
+  // Cloudflare creates the DNS records for these. A hostname that already has a
+  // CNAME record can't become a custom domain until that record is removed.
+  "routes": [
+    { "pattern": "claudineeditor.com", "custom_domain": true },
+    { "pattern": "www.claudineeditor.com", "custom_domain": true }
+  ],
+  // Only the custom domains serve the site, not *.workers.dev or preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
+  "send_metrics": false
+}

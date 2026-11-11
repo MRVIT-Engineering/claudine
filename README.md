@@ -5,7 +5,7 @@
 <h1 align="center">Claudine</h1>
 
 <p align="center">
-  A security-first desktop editor for Claude Code.<br>
+  A simple / fast / secure desktop editor for Claude Code.<br>
   Run Claude Code in parallel, on all your accounts, and review the work at the end.
 </p>
 
@@ -134,7 +134,7 @@ Before changing code, read [CLAUDE.md](CLAUDE.md): it has the rules every change
 | `crates/core` | Security logic: the path guard, with the tripwire and audit log still to come |
 | `crates/protocol` | Message types shared between the hook and the app |
 | `crates/hook` | The Claude Code hook binary, still a stub |
-| `apps/website` | The project website, a static Next.js export, separate from the app |
+| `apps/website` | The project website at [claudineeditor.com](https://claudineeditor.com): a static Next.js export, separate from the app, deployed to Cloudflare on every push to `main` |
 | `docs/DEVELOPMENT_PLAN.md` | Milestones and open decisions |
 | `docs/agentic-mode.md` | How Agentic mode works |
 | `docs/rust-learning` | The maintainer's Rust learning notes |

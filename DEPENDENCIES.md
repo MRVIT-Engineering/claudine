@@ -50,6 +50,7 @@ Every direct dependency, with the reason it's here.
 |---|---|---|
 | `cargo-deny` | 0.20.2 | Checks licenses, advisories and sources, locally and in CI. |
 | `pnpm` | 12.16.1 | Package manager, pinned through `packageManager`. |
+| `wrangler` | 4.157.0 | Deploys the website to Cloudflare from `.github/workflows/website.yml`. Run with `npx` at a pinned version, outside the pnpm workspace, so its install scripts (`workerd`, `esbuild`) need no `allowBuilds` entry. Never part of the app. |
 
 ## CI actions
 

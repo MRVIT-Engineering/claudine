@@ -6,6 +6,23 @@ import { Reveal, Spotlight } from "../components/Motion";
 import { RunsBoard } from "../components/RunsBoard";
 import { SecurityDemo } from "../components/SecurityDemo";
 
+const REPO = "https://github.com/MRVIT-Engineering/claudine";
+
+/** GitHub's mark, inline, so the page loads nothing from elsewhere. */
+function GitHubMark() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+    </svg>
+  );
+}
+
 const STEPS = [
   { title: "Hand off", text: "Describe the task, pick an account." },
   { title: "Work in parallel", text: "Own session, own branch, own worktree." },
@@ -62,6 +79,9 @@ export default function Home() {
           <a href="#accounts">Accounts</a>
           <a href="#security">Security</a>
           <a href="#speed">Speed</a>
+          <a className="nav-cta" href={REPO}>
+            <GitHubMark /> GitHub
+          </a>
         </nav>
       </header>
 
@@ -83,11 +103,11 @@ export default function Home() {
             end.
           </p>
           <div className="hero-ctas">
-            <a className="btn btn-primary" href="#agentic">
-              See Agentic mode
+            <a className="btn btn-primary" href={REPO}>
+              <GitHubMark /> View on GitHub
             </a>
-            <a className="btn" href="#security">
-              How it stays safe
+            <a className="btn" href="#agentic">
+              See Agentic mode
             </a>
           </div>
         </section>
@@ -269,6 +289,12 @@ export default function Home() {
             <p className="lede">
               Uses the Claude Code you already have. macOS and Linux.
             </p>
+            <a
+              className="btn btn-primary cta-btn"
+              href={`${REPO}#build-from-source`}
+            >
+              <GitHubMark /> Build it from source
+            </a>
           </Reveal>
         </section>
       </main>
@@ -277,7 +303,12 @@ export default function Home() {
         <span>
           <Mascot size={16} /> Claudine
         </span>
-        <span className="muted">No analytics on this page, either.</span>
+        <span className="footer-links">
+          <a href={REPO}>GitHub</a>
+          <a href={`${REPO}/blob/main/SECURITY.md`}>Security</a>
+          <a href={`${REPO}/blob/main/LICENSE`}>MIT license</a>
+          <span className="muted">No analytics on this page, either.</span>
+        </span>
       </footer>
     </>
   );
