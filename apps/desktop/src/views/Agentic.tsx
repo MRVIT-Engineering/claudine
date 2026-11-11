@@ -13,14 +13,27 @@ import {
   Show,
   Switch,
 } from "solid-js";
-import { DEFAULT_ACCOUNT, type Run } from "../backend";
-import { AccountBadge, Empty } from "../components/Common";
-import { Dropdown } from "../components/Dropdown";
-import { ArrowUp, CheckIcon, ChevronDown, PlusIcon } from "../components/Icons";
-import { Mascot } from "../components/Mascot";
+import {
+  DEFAULT_ACCOUNT,
+  type Effort,
+  type ModelOption,
+  type Run,
+  type RunPermissions,
+} from "../backend";
+import { ChatInput } from "../components/ChatInput";
+import { AccountBadge } from "../components/Common";
+import { CheckIcon, ChevronDown, PlusIcon } from "../components/Icons";
+import { Resizer } from "../components/Resizer";
 import { RunChanges } from "../components/RunChanges";
 import { Working } from "../components/Working";
+import {
+  effortOptions,
+  MODEL_ALIASES,
+  modelOptions,
+  RUN_MODES,
+} from "../lib/modes";
 import { accountById, accounts, loadAccounts } from "../state/accounts";
+import { claude } from "../state/claude";
 import {
   answerRunPermission,
   approveRun,
@@ -28,6 +41,7 @@ import {
   createRun,
   discardRun,
   dismissRunsError,
+  loadModels,
   loadRuns,
   openRun,
   openRunInEditor,
@@ -40,6 +54,7 @@ import {
   runs,
   selectedRun,
   sendRunMessage,
+  setRunOptions,
   setTab,
   startNewRun,
   stopRun,
@@ -47,12 +62,16 @@ import {
   toReviewCount,
 } from "../state/runs";
 import {
+  DEFAULT_SETTINGS,
   loadCurrentProject,
   navigate,
+  openProjectFolder,
   state,
   updateSettings,
+  WIDTHS,
 } from "../state/store";
 import { Entry, PermissionPrompt } from "./ClaudePanel";
+import { Explorer } from "./Editor";
 
 const STATE_LABEL: Record<Run["state"], string> = {
   running: "Running",
@@ -63,12 +82,6 @@ const STATE_LABEL: Record<Run["state"], string> = {
   paused: "Paused",
   interrupted: "Interrupted",
 };
-
-const PERMISSION_LABEL = {
-  auto: "Auto mode",
-  acceptEdits: "Accept edits",
-  ask: "Ask each time",
-} as const;
 
 function statusPill(run: Run): { text: string; tone: string } {
   if (run.state === "approved") {
@@ -200,44 +213,52 @@ function RunsList() {
   );
 }
 
-/** About what Rust's `git::slug` makes, for the preview. Rust decides the real name. */
-function previewSlug(task: string): string {
-  const words = task
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (words.length <= 28) return words || "run";
-  const cut = words.slice(0, 28);
-  const at = cut.lastIndexOf("-");
-  return (at >= 8 ? cut.slice(0, at) : cut).replace(/-+$/, "");
+/** The modes a run can use, noting when this Claude Code has no auto mode. */
+function runModeOptions() {
+  const noAuto = runs.newRun?.autoAvailable === false;
+  return RUN_MODES.map((m) => ({
+    value: m.value as string,
+    label: m.label,
+    hint:
+      m.value === "auto" && noAuto
+        ? "This Claude Code has no auto mode, so edits and safe commands go through."
+        : m.hint,
+  }));
 }
 
+/** The account's models as `claude` lists them, else the Editor chat's, else aliases. */
+function modelsFor(account: string): ModelOption[] {
+  const listed = runs.models[account];
+  if (listed && listed.length > 0) return listed;
+  if (claude.models.length > 0 && claude.account === account)
+    return claude.models;
+  return MODEL_ALIASES;
+}
+
+/** The effort choices for a model. */
+function effortsFor(account: string, model: string) {
+  return effortOptions(
+    modelsFor(account).find((m) => m.value === model)?.efforts ?? [],
+  );
+}
+
+/** Just the task, mode and model. The run uses the selected account and the current branch. */
 function NewRunForm() {
-  const [task, setTask] = createSignal("");
-  const [account, setAccount] = createSignal(
-    accounts.selected || DEFAULT_ACCOUNT,
-  );
-  const [base, setBase] = createSignal("");
-  const info = () => runs.newRun;
-  createEffect(
-    on(info, (i) => {
-      if (i && !base()) setBase(i.currentBranch ?? i.branches[0] ?? "");
-    }),
-  );
-  const mode = () => {
-    const i = info();
-    if (!i) return "";
-    if (i.permissions === "auto" && !i.autoAvailable) {
-      return "Accept edits + safe commands (this Claude Code has no auto mode)";
-    }
-    return PERMISSION_LABEL[i.permissions];
+  const [mode, setMode] = createSignal<string>(state.settings.runPermissions);
+  const [model, setModel] = createSignal("default");
+  const [effort, setEffort] = createSignal("default");
+  const account = () => accounts.selected || DEFAULT_ACCOUNT;
+  createEffect(() => void loadModels(account()));
+  const base = () => {
+    const info = runs.newRun;
+    return info ? (info.currentBranch ?? info.branches[0] ?? "") : "";
   };
-  const canStart = () =>
-    task().trim().length > 0 && base() !== "" && !runs.busy.new;
-  const start = async () => {
-    if (!canStart()) return;
-    if (await createRun(account(), task(), base())) setTask("");
-  };
+  const start = (task: string) =>
+    createRun(account(), task, base(), {
+      mode: mode() as RunPermissions,
+      model: model() === "default" ? undefined : model(),
+      effort: effort() === "default" ? undefined : (effort() as Effort),
+    });
   return (
     <div class="new-run">
       <h2>New run</h2>
@@ -245,101 +266,44 @@ function NewRunForm() {
         Claude works on its own on a new branch. You can watch, steer it with
         messages, and review every change before anything is committed.
       </p>
-      <label class="field">
-        <span class="field-label">Task</span>
-        <textarea
-          class="input new-run-task"
-          rows="6"
-          placeholder="What should Claude do? Be as specific as you'd be in a ticket."
-          value={task()}
-          onInput={(e) => setTask(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void start();
-            }
-          }}
-        />
-      </label>
-      <div class="new-run-row">
-        <div class="field">
-          <span class="field-label">Account</span>
-          <Dropdown
-            label="Account"
-            class="account-dropdown"
-            value={account()}
-            options={accounts.list.map((a) => ({
-              value: a.id,
-              label: a.label,
-              icon: <span class={`dot acct-dot acct-${a.color}`} />,
-            }))}
-            onChange={setAccount}
-          />
-        </div>
-        <div class="field">
-          <span class="field-label">Base branch</span>
-          <Show
-            when={info()}
-            fallback={<span class="muted small">Reading branches…</span>}
+      <ChatInput
+        autofocus
+        label="Task"
+        rows={4}
+        placeholder={
+          state.project
+            ? "What should Claude do? Be as specific as you'd be in a ticket."
+            : "Open a folder to start a run."
+        }
+        sendLabel={runs.busy.new ? "Starting…" : "Start run"}
+        disabled={!state.project}
+        canSend={base() !== "" && !runs.busy.new}
+        onSend={start}
+        onEscape={runs.list.length > 0 ? cancelNewRun : undefined}
+        mode={{ value: mode(), options: runModeOptions(), onChange: setMode }}
+        model={{
+          value: model(),
+          options: modelOptions(modelsFor(account())),
+          onChange: setModel,
+        }}
+        effort={{
+          value: effort(),
+          options: effortsFor(account(), model()),
+          onChange: setEffort,
+        }}
+      />
+      <Show when={!state.project}>
+        <p class="muted small new-run-folder">
+          Runs work on branches of a git repository.{" "}
+          <button
+            type="button"
+            class="btn btn-sm btn-accent"
+            onClick={() => void openProjectFolder()}
           >
-            {(i) => (
-              <Dropdown
-                label="Base branch"
-                class="account-dropdown"
-                value={base()}
-                options={i().branches.map((b) => ({ value: b, label: b }))}
-                onChange={setBase}
-              />
-            )}
-          </Show>
-        </div>
-      </div>
-      <Show when={info()}>
-        {(i) => (
-          <dl class="new-run-preview">
-            <dt>Branch</dt>
-            <dd>
-              <code>
-                {i().branchPrefix}
-                {previewSlug(task())}
-              </code>
-            </dd>
-            <dt>Permissions</dt>
-            <dd>
-              {mode()}. Pushing, installs, deleting files and web access always
-              ask.
-            </dd>
-            <dt>Worktree</dt>
-            <dd>
-              {i().worktree
-                ? "A separate git worktree, so your checkout isn't touched"
-                : "None: Claude works in your project folder"}
-            </dd>
-            <dt>Pre-PR review</dt>
-            <dd>
-              {i().review
-                ? "On: you review and approve before anything is committed"
-                : "Off: the result is committed to the branch"}
-            </dd>
-          </dl>
-        )}
-      </Show>
-      <div class="row">
-        <button
-          type="button"
-          class="btn btn-accent"
-          disabled={!canStart()}
-          onClick={() => void start()}
-        >
-          {runs.busy.new ? "Starting…" : "Start run"}
-        </button>
-        <Show when={runs.list.length > 0}>
-          <button type="button" class="btn" onClick={cancelNewRun}>
-            Cancel
+            Open Folder…
           </button>
-        </Show>
-        <span class="muted small">⌘↵ starts</span>
-      </div>
+        </p>
+      </Show>
     </div>
   );
 }
@@ -394,8 +358,8 @@ function PlanCard(props: { run: Run }) {
 }
 
 function RunComposer(props: { run: Run }) {
-  const [text, setText] = createSignal("");
   const account = () => accountOf(props.run);
+  createEffect(() => void loadModels(props.run.account));
   const hint = () => {
     switch (props.run.state) {
       case "running":
@@ -409,57 +373,70 @@ function RunComposer(props: { run: Run }) {
         return "";
     }
   };
-  const disabled = () =>
-    !["running", "paused", "review", "interrupted"].includes(props.run.state);
-  const submit = async () => {
-    if (!text().trim() || disabled()) return;
-    if (await sendRunMessage(props.run.id, text())) setText("");
-  };
+  const closed = () =>
+    props.run.state === "approved" || props.run.state === "applied";
   return (
-    <form
-      class="composer run-composer"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
-      }}
-    >
-      <textarea
-        aria-label="Message Claude"
-        rows="2"
-        disabled={disabled()}
+    <div class="run-composer">
+      <ChatInput
+        disabled={
+          !["running", "paused", "review", "interrupted"].includes(
+            props.run.state,
+          )
+        }
         placeholder={
           props.run.state === "review"
             ? "Ask a question or ask for more changes…"
             : "Steer Claude while it works…"
         }
-        value={text()}
-        onInput={(e) => setText(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-            e.preventDefault();
-            void submit();
-          }
-        }}
-      />
-      <div class="composer-row">
+        onSend={(text) => sendRunMessage(props.run.id, text)}
+        mode={
+          closed()
+            ? undefined
+            : {
+                value: props.run.mode ?? state.settings.runPermissions,
+                options: runModeOptions(),
+                onChange: (mode) =>
+                  void setRunOptions(props.run.id, {
+                    mode: mode as RunPermissions,
+                  }),
+              }
+        }
+        model={
+          closed()
+            ? undefined
+            : {
+                value: props.run.model ?? "default",
+                options: modelOptions(modelsFor(props.run.account)),
+                onChange: (model) =>
+                  void setRunOptions(props.run.id, { model }),
+              }
+        }
+        effort={
+          closed()
+            ? undefined
+            : {
+                value: props.run.effort ?? "default",
+                title: "Applies the next time Claude starts in this run.",
+                options: effortsFor(
+                  props.run.account,
+                  props.run.model ?? "default",
+                ),
+                onChange: (effort) => {
+                  if (effort !== "default") {
+                    void setRunOptions(props.run.id, {
+                      effort: effort as Effort,
+                    });
+                  }
+                },
+              }
+        }
+      >
         <span class={`account-chip acct-${account().color}`}>
           <b>{account().label.charAt(0).toUpperCase()}</b> {account().label}
         </span>
-        <span class="mode-chip">
-          {PERMISSION_LABEL[state.settings.runPermissions]}
-        </span>
         <span class="muted small">{hint()}</span>
-        <span class="spacer" />
-        <button
-          type="submit"
-          class="send-btn"
-          aria-label="Send"
-          disabled={!text().trim() || disabled()}
-        >
-          <ArrowUp />
-        </button>
-      </div>
-    </form>
+      </ChatInput>
+    </div>
   );
 }
 
@@ -903,16 +880,27 @@ export function Agentic() {
   });
   createEffect(
     on(
-      () => runs.creating,
-      (creating) => {
-        if (creating && !runs.newRun && state.project) void startNewRun();
+      () => [runs.creating, state.project] as const,
+      ([creating, project]) => {
+        if (creating && !runs.newRun && project) void startNewRun();
       },
     ),
   );
   const run = createMemo(() => (runs.creating ? undefined : selectedRun()));
   return (
-    <div class="agentic-layout">
-      <RunsList />
+    <div class="agentic-layout" classList={{ "with-files": !!state.project }}>
+      <div class="sidebar-slot">
+        <RunsList />
+        <Resizer
+          label="Resize runs list"
+          edge="right"
+          value={state.settings.runsWidth}
+          min={WIDTHS.runsWidth[0]}
+          max={WIDTHS.runsWidth[1]}
+          defaultValue={DEFAULT_SETTINGS.runsWidth}
+          onChange={(runsWidth) => updateSettings({ runsWidth })}
+        />
+      </div>
       <main class="agentic-main">
         <Show when={runs.error}>
           {(error) => (
@@ -929,20 +917,28 @@ export function Agentic() {
           )}
         </Show>
         <Switch>
-          <Match when={!state.project}>
-            <div class="agentic-empty">
-              <Mascot size={64} />
-              <Empty title="Open a folder to start runs">
-                Runs work on branches of the open git repository.
-              </Empty>
-            </div>
+          <Match when={state.project ? run() : undefined}>
+            {(r) => <RunView run={r()} />}
           </Match>
-          <Match when={run()}>{(r) => <RunView run={r()} />}</Match>
           <Match when={true}>
             <NewRunForm />
           </Match>
         </Switch>
       </main>
+      <Show when={state.project}>
+        <div class="sidebar-slot">
+          <Explorer right />
+          <Resizer
+            label="Resize file tree"
+            edge="left"
+            value={state.settings.runFilesWidth}
+            min={WIDTHS.runFilesWidth[0]}
+            max={WIDTHS.runFilesWidth[1]}
+            defaultValue={DEFAULT_SETTINGS.runFilesWidth}
+            onChange={(runFilesWidth) => updateSettings({ runFilesWidth })}
+          />
+        </div>
+      </Show>
     </div>
   );
 }

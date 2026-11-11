@@ -5,6 +5,7 @@ import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { highlightCode, tagHighlighter, tags } from "@lezer/highlight";
 import type { JSX } from "solid-js";
+import { hclDescription } from "./hcl";
 
 // CodeMirror adds a <style> tag to a normal document, which `style-src 'self'`
 // blocks. In a shadow root it uses constructable stylesheets instead, which the
@@ -58,6 +59,22 @@ const theme = EditorView.theme({
     fontSize: "var(--code-size)",
     lineHeight: "var(--code-line-height)",
   },
+  // The page's scrollbar styles don't reach into the shadow root.
+  ".cm-scroller::-webkit-scrollbar": {
+    width: "10px",
+    height: "10px",
+    background: "transparent",
+  },
+  ".cm-scroller::-webkit-scrollbar-track, .cm-scroller::-webkit-scrollbar-corner":
+    { background: "transparent" },
+  ".cm-scroller::-webkit-scrollbar-thumb": {
+    border: "2px solid transparent",
+    borderRadius: "6px",
+    background: "var(--scrollbar) padding-box",
+  },
+  ".cm-scroller::-webkit-scrollbar-thumb:hover": {
+    background: "var(--scrollbar-hover) padding-box",
+  },
   ".cm-content": { caretColor: "var(--text)", padding: "0" },
   ".cm-gutters": {
     backgroundColor: "var(--editor)",
@@ -89,7 +106,8 @@ const theme = EditorView.theme({
     borderBottom: "4px solid transparent",
     borderLeft: "5px solid var(--del-ink)",
   },
-  ".cm-activeLine": { backgroundColor: "var(--editor-line)" },
+  // Translucent: an opaque line hid the selection behind it on the cursor's line.
+  ".cm-activeLine": { backgroundColor: "var(--active-line)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--editor-line)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
@@ -170,6 +188,26 @@ const theme = EditorView.theme({
       "repeating-linear-gradient(-45deg, var(--hatch) 0 4px, transparent 4px 9px)",
   },
   "&.cm-merge-a": { borderRight: "1px solid var(--line)" },
+  // The merge package's fold bar is a near-white gradient unless the theme is marked dark.
+  // Its rule is more specific than ours, hence `!important`.
+  ".cm-collapsedLines": {
+    background: "var(--panel-2) !important",
+    color: "var(--muted) !important",
+    borderBlock: "1px solid var(--line)",
+    fontFamily: "var(--font-ui)",
+    fontSize: "12px",
+  },
+  ".cm-collapsedLines:hover": { color: "var(--text) !important" },
+  // Inline blame at the end of the line, like GitLens.
+  ".cm-blame": {
+    marginLeft: "3em",
+    color: "var(--muted)",
+    opacity: "0.75",
+    fontStyle: "italic",
+    whiteSpace: "pre",
+    pointerEvents: "none",
+    userSelect: "none",
+  },
   // Completion popup.
   ".cm-tooltip": {
     backgroundColor: "var(--panel)",
@@ -372,13 +410,17 @@ const dataHighlighter = syntaxHighlighting(
   ]),
 );
 
-/** Which language a file is, by name, from the 140-odd that CodeMirror knows. */
+const EXTRA_LANGUAGES = [hclDescription];
+
+/** Which language a file is, by name, from the 140-odd that CodeMirror knows and ours. */
 function describe(path: string): LanguageDescription | null {
   const name = path.slice(path.lastIndexOf("/") + 1);
   if (name === "Cargo.lock") {
     return LanguageDescription.matchLanguageName(languages, "TOML");
   }
   return (
+    // Our own languages first, for the ones CodeMirror doesn't ship.
+    LanguageDescription.matchFilename(EXTRA_LANGUAGES, name.toLowerCase()) ??
     LanguageDescription.matchFilename(languages, name) ??
     LanguageDescription.matchFilename(languages, name.toLowerCase())
   );

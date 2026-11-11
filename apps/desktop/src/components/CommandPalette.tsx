@@ -21,11 +21,14 @@ import { PREVIEW_CLAUDE } from "../lib/flags";
 import { isMarkdown, toggleMarkdownPreview } from "../state/markdown";
 import {
   accountOf,
+  activeFile,
   letterOf,
   navigate,
   openFile,
   openProjectFolder,
+  openTabs,
   refreshFileList,
+  saveActiveFile,
   setDialog,
   showSidebar,
   state,
@@ -110,6 +113,7 @@ const COMMANDS: Command[] = [
     needsEditor: true,
     run: () => openPalette(":"),
   },
+  { label: "Save", keys: `${MOD}S`, run: saveActiveFile },
   { label: "Find", keys: `${MOD}F`, run: () => openFindInActive() },
   {
     label: "Toggle Markdown Preview",
@@ -287,7 +291,7 @@ function fileItems(query: string): Item[] {
       label: <Highlighted text={name} hits={hits} offset={slash + 1} />,
       title: path,
       detail: dir ? <Highlighted text={dir} hits={hits} /> : undefined,
-      isOpen: state.openTabs.includes(path),
+      isOpen: openTabs().includes(path),
       badge: account
         ? { letter: letterOf(account.label), color: account.color }
         : undefined,
@@ -498,7 +502,9 @@ export function CommandPalette() {
     const plain = mod && !event.altKey;
     let run: (() => void) | null = null;
 
-    if (plain && !event.shiftKey && key === "o") {
+    if (plain && !event.shiftKey && key === "s") {
+      run = saveActiveFile;
+    } else if (plain && !event.shiftKey && key === "o") {
       run = () => void openProjectFolder();
     } else if (plain && event.shiftKey && key === "o")
       run = () => openPalette("");
@@ -512,8 +518,8 @@ export function CommandPalette() {
       event.shiftKey &&
       key === "v" &&
       state.view === "editor" &&
-      state.activeTab &&
-      isMarkdown(state.activeTab)
+      activeFile() &&
+      isMarkdown(activeFile())
     )
       run = toggleMarkdownPreview;
     else if (plain && event.shiftKey && key === "e") {

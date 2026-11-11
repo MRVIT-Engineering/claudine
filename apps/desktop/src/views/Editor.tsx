@@ -11,7 +11,7 @@ import {
 } from "solid-js";
 import { type DirEntry, describeError, hasBackend } from "../backend";
 import { CodeEditor } from "../components/CodeEditor";
-import { AccountChip, Empty, Toggle } from "../components/Common";
+import { AccountChip, Empty } from "../components/Common";
 import { FileTypeIcon } from "../components/FileTypeIcon";
 import { openFindInActive } from "../components/FindPanel";
 import {
@@ -19,9 +19,11 @@ import {
   ChevronDown,
   ChevronRight,
   CloseIcon,
+  EyeIcon,
   FilesIcon,
   FolderIcon,
   FolderOpenIcon,
+  GitIcon,
   PlusIcon,
   SearchIcon,
   SplitIcon,
@@ -30,9 +32,20 @@ import {
 import { MarkdownPreview } from "../components/MarkdownPreview";
 import { Mascot } from "../components/Mascot";
 import { MergeReview } from "../components/MergeReview";
+import { ProposedDiff } from "../components/ProposedDiff";
 import { Resizer } from "../components/Resizer";
 import { PREVIEW_CLAUDE } from "../lib/flags";
-import { claude, toggleClaudePanel } from "../state/claude";
+import { registerPermissionKeys } from "../lib/permissionKeys";
+import { dragging, dropTarget, startTabDrag } from "../lib/tabDrag";
+import {
+  answerPermission,
+  claude,
+  type PendingEdit,
+  pendingEditOf,
+  toggleClaudePanel,
+} from "../state/claude";
+import { closeGitDiff, type GitDiffView, git } from "../state/git";
+import type { Group, Layout, Split } from "../state/groups";
 import {
   isMarkdown,
   isPreviewing,
@@ -41,8 +54,10 @@ import {
 } from "../state/markdown";
 import {
   accountOf,
+  activeFile,
   activeSession,
   approveEdit,
+  CHAT_TAB,
   closeTab,
   composerFocus,
   DEFAULT_SETTINGS,
@@ -52,15 +67,19 @@ import {
   declineEdit,
   dirEntries,
   fileName,
+  focusGroup,
   hunkCounts,
   letterOf,
   lineStats,
+  navigate,
+  openChatTab,
   openError,
   openFile,
   openProjectFolder,
   proposalFor,
   resolvedText,
   resolvePermission,
+  revealInTree,
   selectSession,
   sendMessage,
   setDialog,
@@ -73,14 +92,26 @@ import {
 } from "../state/store";
 import type { Session, SourceFile, TranscriptItem } from "../types";
 import { ClaudePanel } from "./ClaudePanel";
+import { GitPanel } from "./GitPanel";
 import { focusProjectSearch, SearchPanel } from "./SearchPanel";
 
 function sessionForFile(path: string): Session | undefined {
   return state.sessions.find((s) => s.file === path);
 }
 
+/** The file shown in the editor area: a Git panel diff's, else the active tab's. */
+function shownFile(): string | null {
+  return git.diff?.proposal.path ?? (activeFile() || null);
+}
+
 function TreeItem(props: { entry: DirEntry; depth: number }) {
   const expanded = () => state.expanded.includes(props.entry.path);
+  const active = () => !props.entry.isDir && shownFile() === props.entry.path;
+  let row!: HTMLButtonElement;
+  // The open file's row scrolls into view, also when its folder has just loaded.
+  createEffect(() => {
+    if (active()) row.scrollIntoView({ block: "nearest" });
+  });
   const session = () => sessionForFile(props.entry.path);
   const account = () => {
     const s = session();
@@ -89,19 +120,21 @@ function TreeItem(props: { entry: DirEntry; depth: number }) {
   return (
     <li>
       <button
+        ref={row}
         type="button"
         class={`tree-row depth-${Math.min(props.depth, 5)}`}
         classList={{
-          active: !props.entry.isDir && state.activeTab === props.entry.path,
+          active: active(),
           symlink: props.entry.isSymlink,
         }}
         title={props.entry.isSymlink ? "Symbolic link" : undefined}
         aria-expanded={props.entry.isDir ? expanded() : undefined}
-        onClick={() =>
-          props.entry.isDir
-            ? toggleFolder(props.entry.path)
-            : openFile(props.entry.path)
-        }
+        onClick={() => {
+          if (props.entry.isDir) return toggleFolder(props.entry.path);
+          // From the Agentic tab, a file opens in the Editor.
+          if (state.view !== "editor") navigate("editor");
+          return openFile(props.entry.path);
+        }}
       >
         <Show
           when={props.entry.isDir}
@@ -174,9 +207,18 @@ function FileTree(props: { path: string; depth: number }) {
   );
 }
 
-function Explorer() {
+/** The file tree. The Agentic tab shows it on the right. */
+export function Explorer(props: { right?: boolean }) {
+  // Opening a file, or a diff of one, opens its folders in the tree.
+  createEffect(() => {
+    const path = shownFile();
+    if (path) revealInTree(path);
+  });
   return (
-    <aside class="sidebar explorer">
+    <aside
+      class="sidebar explorer"
+      classList={{ "explorer-right": props.right }}
+    >
       <div class="sidebar-head">
         <h2 class="section-title">Explorer</h2>
         <Show when={state.project}>
@@ -259,6 +301,47 @@ function Welcome() {
 }
 
 /** A real file from disk: loading, a reason it can't be shown, or the editor. */
+/** Claude's edit to this file, waiting for an answer. Answering here is the same as in the chat. */
+function PendingEditView(props: { edit: PendingEdit }) {
+  const name = () => fileName(props.edit.proposal.path);
+  const creates = () =>
+    props.edit.tool === "Write" && props.edit.proposal.before === "";
+  onCleanup(
+    registerPermissionKeys(
+      (allow) => void answerPermission(props.edit.id, allow),
+    ),
+  );
+  return (
+    <>
+      <div class="review-bar">
+        <span class="review-title">
+          Claude wants to {creates() ? "create" : "change"}{" "}
+          <code>{name()}</code>
+        </span>
+        <button
+          type="button"
+          class="btn"
+          title="Deny (⇧N)"
+          onClick={() => void answerPermission(props.edit.id, false)}
+        >
+          Deny <kbd>⇧N</kbd>
+        </button>
+        <button
+          type="button"
+          class="btn btn-accent"
+          title="Allow (⇧↵)"
+          onClick={() => void answerPermission(props.edit.id, true)}
+        >
+          Allow <kbd>⇧↵</kbd>
+        </button>
+      </div>
+      <div class="code-scroll">
+        <ProposedDiff proposal={props.edit.proposal} />
+      </div>
+    </>
+  );
+}
+
 function DiskFileView(props: { path: string }) {
   const loaded = () => state.files[props.path];
   const ready = () => {
@@ -299,26 +382,91 @@ function DiskFileView(props: { path: string }) {
   );
 }
 
-function Tabs() {
+/** The Claude chat's tab, among the file tabs. */
+function ChatTab(props: { group: Group; dropBefore: boolean }) {
+  const active = () => props.group.active === CHAT_TAB;
   return (
-    <div class="file-tabs-bar">
-      <div class="file-tabs" role="tablist" aria-label="Open files">
-        <For each={state.openTabs}>
-          {(path) => {
+    <div
+      class="file-tab chat-tab"
+      classList={{ active: active(), "drop-before": props.dropBefore }}
+      data-tab={CHAT_TAB}
+    >
+      <button
+        type="button"
+        class="file-tab-open"
+        role="tab"
+        aria-selected={active()}
+        onClick={openChatTab}
+        onPointerDown={(e) => startTabDrag(CHAT_TAB, "Claude", e)}
+      >
+        <span class="file-tab-icon">
+          <Mascot size={13} />
+        </span>
+        <span>Claude</span>
+        <Show when={claude.status === "working"}>
+          <span class="chat-tab-working" title="Claude is working" />
+        </Show>
+        <Show when={claude.permissions.length > 0}>
+          <span class="count-badge" title="Waiting for your answer">
+            {claude.permissions.length}
+          </span>
+        </Show>
+      </button>
+      <button
+        type="button"
+        class="file-tab-close"
+        aria-label="Close Claude"
+        title="Close. The session keeps running."
+        onClick={() => closeTab(CHAT_TAB)}
+      >
+        <CloseIcon size={11} />
+      </button>
+    </div>
+  );
+}
+
+/** Whether a dragged tab would land in this bar, before the tab at `index`. */
+function dropsAt(groupId: string, index: number): boolean {
+  const target = dropTarget();
+  return (
+    target?.kind === "bar" &&
+    target.groupId === groupId &&
+    target.index === index
+  );
+}
+
+function Tabs(props: { group: Group }) {
+  return (
+    <div class="file-tabs-bar" data-tabbar={props.group.id}>
+      <div
+        class="file-tabs"
+        role="tablist"
+        aria-label="Open files"
+        classList={{
+          "drop-end": dropsAt(props.group.id, props.group.tabs.length),
+        }}
+      >
+        <For each={props.group.tabs}>
+          {(path, index) => {
+            const dropBefore = () => dropsAt(props.group.id, index());
+            if (path === CHAT_TAB)
+              return <ChatTab group={props.group} dropBefore={dropBefore()} />;
             const stats = () => lineStats(path);
-            const proposed = () =>
-              path === state.activeTab && hunkCounts(path).pending > 0;
+            const active = () => props.group.active === path;
+            const proposed = () => active() && hunkCounts(path).pending > 0;
             return (
               <div
                 class="file-tab"
-                classList={{ active: state.activeTab === path }}
+                classList={{ active: active(), "drop-before": dropBefore() }}
+                data-tab={path}
               >
                 <button
                   type="button"
                   class="file-tab-open"
                   role="tab"
-                  aria-selected={state.activeTab === path}
+                  aria-selected={active()}
                   onClick={() => openFile(path)}
+                  onPointerDown={(e) => startTabDrag(path, fileName(path), e)}
                 >
                   <Show when={proposed()}>
                     <SplitIcon size={13} />
@@ -384,19 +532,40 @@ function Breadcrumb(props: { path: string }) {
         )}
       </For>
       <Show when={isMarkdown(props.path) && !proposalFor(props.path)}>
-        <span
-          class="md-toggle"
-          title={`Show the rendered file (${PREVIEW_KEYS})`}
+        <button
+          type="button"
+          class="icon-btn md-toggle"
+          classList={{ on: isPreviewing(props.path) }}
+          aria-pressed={isPreviewing(props.path)}
+          aria-label="Markdown preview"
+          title={`${isPreviewing(props.path) ? "Show the source" : "Show the rendered file"} (${PREVIEW_KEYS})`}
+          onClick={() =>
+            setMarkdownPreview(props.path, !isPreviewing(props.path))
+          }
         >
-          <span aria-hidden="true">Preview</span>
-          <Toggle
-            label="Markdown preview"
-            checked={isPreviewing(props.path)}
-            onChange={(on) => setMarkdownPreview(props.path, on)}
-          />
-        </span>
+          <EyeIcon size={15} />
+        </button>
       </Show>
     </nav>
+  );
+}
+
+/** A file's change from the Git panel, over the open tabs until closed. */
+function GitDiff(props: { view: GitDiffView }) {
+  return (
+    <div class="git-diff">
+      <div class="review-bar">
+        <span class="review-title">
+          <code>{props.view.proposal.path}</code> · {props.view.title}
+        </span>
+        <button type="button" class="btn" onClick={closeGitDiff}>
+          Close
+        </button>
+      </div>
+      <div class="code-scroll">
+        <ProposedDiff proposal={props.view.proposal} />
+      </div>
+    </div>
   );
 }
 
@@ -432,15 +601,26 @@ function ActivityBar() {
         <button
           type="button"
           class="activity-btn"
-          classList={{ active: claude.open }}
+          classList={{ active: state.activeTab === CHAT_TAB }}
           title="Claude"
           aria-label="Claude"
-          aria-pressed={claude.open}
+          aria-pressed={state.activeTab === CHAT_TAB}
           onClick={toggleClaudePanel}
         >
           <Mascot size={18} />
         </button>
       </Show>
+      <button
+        type="button"
+        class="activity-btn"
+        classList={{ active: state.sidebar === "git" }}
+        title="Git"
+        aria-label="Git"
+        aria-pressed={state.sidebar === "git"}
+        onClick={() => showSidebar("git")}
+      >
+        <GitIcon size={17} />
+      </button>
       <span class="spacer" />
       <button
         type="button"
@@ -787,8 +967,7 @@ export function PermissionCard(props: {
 function Composer(props: { session: Session }) {
   const [text, setText] = createSignal("");
   let input!: HTMLTextAreaElement;
-  const activeName = () =>
-    state.activeTab ? fileName(state.activeTab) : undefined;
+  const activeName = () => (activeFile() ? fileName(activeFile()) : undefined);
 
   createEffect(
     on(
@@ -954,17 +1133,123 @@ function PermissionCardFor(props: { session: Session; command: string }) {
   );
 }
 
+/** What one group shows: its tab's file, the chat, or a hint when it's empty. */
+function GroupContent(props: { tab: string }) {
+  return (
+    <Show when={props.tab !== CHAT_TAB} fallback={<ClaudePanel />}>
+      <Show
+        when={props.tab}
+        keyed
+        fallback={
+          <Empty title="No file open">
+            Pick a file in the explorer, or press ⌘⇧O to go to a file.
+          </Empty>
+        }
+      >
+        {(path) => (
+          <>
+            <Breadcrumb path={path} />
+            <Show
+              when={proposalFor(path)}
+              keyed
+              fallback={
+                <Show
+                  when={pendingEditOf(path)}
+                  keyed
+                  fallback={<DiskFileView path={path} />}
+                >
+                  {(edit) => <PendingEditView edit={edit} />}
+                </Show>
+              }
+            >
+              {(proposal) => <ReviewView file={proposal} />}
+            </Show>
+          </>
+        )}
+      </Show>
+    </Show>
+  );
+}
+
+/** One tab group: its tab bar and what its shown tab holds. */
+function EditorGroup(props: { group: Group }) {
+  const zone = () => {
+    const target = dropTarget();
+    return target?.kind === "zone" && target.groupId === props.group.id
+      ? target.zone
+      : null;
+  };
+  return (
+    <section
+      class="editor-group"
+      classList={{
+        focused: state.activeGroup === props.group.id,
+        split: state.layout.kind === "split",
+      }}
+      onPointerDown={() => focusGroup(props.group.id)}
+      onFocusIn={() => focusGroup(props.group.id)}
+    >
+      <Tabs group={props.group} />
+      <div class="editor-group-body" data-group-body={props.group.id}>
+        <GroupContent tab={props.group.active} />
+        <Show when={zone()}>
+          {(side) => <div class={`drop-zone drop-${side()}`} />}
+        </Show>
+      </div>
+    </section>
+  );
+}
+
+/** The groups, split side by side or one above the other. */
+function LayoutView(props: { node: Layout }) {
+  return (
+    <Switch>
+      <Match when={props.node.kind === "split" && (props.node as Split)}>
+        {(split) => (
+          <div class={`editor-split split-${split().dir}`}>
+            <LayoutView node={split().first} />
+            <LayoutView node={split().second} />
+          </div>
+        )}
+      </Match>
+      <Match when={props.node.kind === "group" && (props.node as Group)}>
+        {(group) => <EditorGroup group={group()} />}
+      </Match>
+    </Switch>
+  );
+}
+
+/** The dragged tab's name, following the pointer. */
+function DragLabel() {
+  return (
+    <Show when={dragging()}>
+      {(drag) => (
+        <div
+          class="tab-drag-label"
+          style={{
+            transform: `translate(${drag().x + 12}px, ${drag().y + 10}px)`,
+          }}
+        >
+          {drag().label}
+        </div>
+      )}
+    </Show>
+  );
+}
+
 export function Editor() {
   return (
-    <div
-      class="editor-layout"
-      classList={{ "no-chat": !PREVIEW_CLAUDE && !claude.open }}
-    >
+    <div class="editor-layout" classList={{ "no-chat": !PREVIEW_CLAUDE }}>
       <ActivityBar />
       <div class="sidebar-slot">
-        <Show when={state.sidebar === "search"} fallback={<Explorer />}>
-          <SearchPanel />
-        </Show>
+        <Switch fallback={<Explorer />}>
+          <Match when={state.sidebar === "search"}>
+            <SearchPanel />
+          </Match>
+          <Match when={state.sidebar === "git"}>
+            <GitPanel />
+          </Match>
+        </Switch>
         <Resizer
           label="Resize side bar"
           edge="right"
@@ -977,36 +1262,25 @@ export function Editor() {
       </div>
       <main class="editor-main">
         <Show when={state.project} fallback={<Welcome />}>
-          <Tabs />
           <Show
-            when={state.activeTab}
-            keyed
+            when={git.diff}
             fallback={
-              <Empty title="No file open">
-                Pick a file in the explorer, or press ⌘⇧O to go to a file.
-              </Empty>
+              <>
+                <div class="editor-groups">
+                  <LayoutView node={state.layout} />
+                </div>
+                <DragLabel />
+              </>
             }
           >
-            {(path) => (
-              <>
-                <Breadcrumb path={path} />
-                <Show
-                  when={proposalFor(path)}
-                  keyed
-                  fallback={<DiskFileView path={path} />}
-                >
-                  {(proposal) => <ReviewView file={proposal} />}
-                </Show>
-              </>
-            )}
+            {(diff) => <GitDiff view={diff()} />}
           </Show>
         </Show>
       </main>
-      <Show when={PREVIEW_CLAUDE || claude.open}>
+      {/* The design preview keeps its mock chat on the right; the real one is a tab. */}
+      <Show when={PREVIEW_CLAUDE}>
         <div class="sidebar-slot">
-          <Show when={PREVIEW_CLAUDE} fallback={<ClaudePanel />}>
-            <ChatPanel />
-          </Show>
+          <ChatPanel />
           <Resizer
             label="Resize chat"
             edge="left"

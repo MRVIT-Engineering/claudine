@@ -1,9 +1,15 @@
 //! Reading the project's folders and files. Every path goes through the path guard.
 
 use crate::error::CommandError;
+use cap_std::fs::OpenOptions;
 use my_editor_core::path_guard::ProjectRoot;
 use serde::Serialize;
-use std::io::Read;
+use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Bigger files aren't opened, so a 2 GB log can't freeze the webview.
 pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
@@ -18,6 +24,14 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+}
+
+/// A file's text and its version: a hash of its bytes, sent back when saving so a change
+/// made outside Claudine since then is caught instead of overwritten.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct FileText {
+    pub text: String,
+    pub version: String,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -90,13 +104,25 @@ pub fn list_dir(
 }
 
 /// Reads a text file. Refuses folders, oversized files and anything that isn't UTF-8 text.
-pub fn read_file(root: &ProjectRoot, raw: &str) -> Result<String, CommandError> {
+pub fn read_file(root: &ProjectRoot, raw: &str) -> Result<FileText, CommandError> {
     let path = root.read_path(raw)?;
-    let file = root.dir().open(path.as_path())?;
+    let bytes = read_bytes(root, path.as_path())?;
+    // NUL bytes are valid UTF-8 but mean a binary file.
+    if bytes.contains(&0) {
+        return Err(CommandError::NotText);
+    }
+    let version = version_of(&bytes);
+    // LEARN: `from_utf8` fails on bytes that aren't valid UTF-8, instead of replacing them.
+    let text = String::from_utf8(bytes).map_err(|_| CommandError::NotText)?;
+    Ok(FileText { text, version })
+}
+
+/// A file's bytes, up to [`MAX_FILE_BYTES`]. `path` must come from the guard.
+fn read_bytes(root: &ProjectRoot, path: &std::path::Path) -> Result<Vec<u8>, CommandError> {
+    let file = root.dir().open(path)?;
     if file.metadata()?.is_dir() {
         return Err(CommandError::IsADirectory);
     }
-
     // Reads one byte past the limit, so a file that grew after the check is still caught.
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
@@ -104,19 +130,90 @@ pub fn read_file(root: &ProjectRoot, raw: &str) -> Result<String, CommandError> 
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(CommandError::TooLarge);
     }
-    // NUL bytes are valid UTF-8 but mean a binary file.
-    if bytes.contains(&0) {
-        return Err(CommandError::NotText);
-    }
-    // LEARN: `from_utf8` fails on bytes that aren't valid UTF-8, instead of replacing them.
-    String::from_utf8(bytes).map_err(|_| CommandError::NotText)
+    Ok(bytes)
 }
 
-/// Every file in the project, for Go to file and project search, sorted by path.
+/// A short fingerprint of a file's bytes. It detects changes, not attacks, so std's
+/// hasher is enough; `DefaultHasher::new()` gives the same answer every time.
+fn version_of(bytes: &[u8]) -> String {
+    // LEARN: `Hash` types feed themselves into a `Hasher`; `finish` reads out the result.
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Numbers temp files, so two saves at once never share one.
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// Saves `text` over an existing file and returns its new version.
+///
+/// When `expected` is given and the file on disk no longer matches it, nothing is written
+/// and the result is `Conflict`. `None` overwrites, after the user chose to.
+///
+/// The write is atomic: the text goes to a temp file in the same folder, which is flushed
+/// to disk and then renamed over the file. A crash leaves the old file or the new one, never
+/// half of each. The file keeps its permissions, so a script stays executable.
+pub fn save_file(
+    root: &ProjectRoot,
+    raw: &str,
+    text: &str,
+    expected: Option<&str>,
+) -> Result<String, CommandError> {
+    // Refuses `.git`, `.claude/`, `.mcp.json` and any path through a symlink.
+    let path = root.write_path(raw)?;
+    let path = path.as_path();
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(CommandError::TooLarge);
+    }
+    // Only existing files: creating one is a separate action.
+    let current = read_bytes(root, path)?;
+    if let Some(expected) = expected
+        && version_of(&current) != expected
+    {
+        return Err(CommandError::Conflict);
+    }
+    let permissions = root.dir().metadata(path)?.permissions();
+
+    let name = path
+        .file_name()
+        .ok_or(CommandError::InvalidPath)?
+        .to_string_lossy();
+    let number = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    let temp_name = format!(".{name}.claudine-{}-{number}.tmp", std::process::id());
+    let temp: PathBuf = match path.parent() {
+        Some(parent) => parent.join(temp_name),
+        None => PathBuf::from(temp_name),
+    };
+
+    // LEARN: `create_new` fails if the file exists, so this never writes over another file.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let written = (|| -> Result<(), CommandError> {
+        let mut file = root.dir().open_with(&temp, &options)?;
+        file.write_all(text.as_bytes())?;
+        file.set_permissions(permissions)?;
+        // On disk before the rename, or a crash could leave an empty file in its place.
+        file.sync_all()?;
+        root.dir().rename(&temp, root.dir(), path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = root.dir().remove_file(&temp);
+    }
+    written?;
+    Ok(version_of(text.as_bytes()))
+}
+
+/// Every file in the project, for Go to file and project search, sorted by path. Paths in
+/// `ignored` (gitignored files, and folders without a trailing `/`) are left out.
 ///
 /// Folders that can't be read are skipped. Symlinked folders aren't followed, because two
 /// links pointing at each other would loop forever.
-pub fn list_files(root: &ProjectRoot, hidden: &[String]) -> Result<FileList, CommandError> {
+pub fn list_files(
+    root: &ProjectRoot,
+    hidden: &[String],
+    ignored: &HashSet<String>,
+) -> Result<FileList, CommandError> {
     let mut paths = Vec::new();
     let mut pending: Vec<Option<String>> = vec![None];
 
@@ -126,6 +223,10 @@ pub fn list_files(root: &ProjectRoot, hidden: &[String]) -> Result<FileList, Com
             continue;
         };
         for entry in entries {
+            // Gitignored files and folders, such as `dist/`, aren't worth finding.
+            if ignored.contains(&entry.path) {
+                continue;
+            }
             if entry.is_dir {
                 if !entry.is_symlink {
                     pending.push(Some(entry.path));
@@ -268,8 +369,8 @@ mod tests {
             "src/main.rs",
             "fn main() { println!(\"héllo\"); }".as_bytes(),
         );
-        let text = read_file(&project.root(), "src/main.rs").unwrap();
-        assert_eq!(text, "fn main() { println!(\"héllo\"); }");
+        let file = read_file(&project.root(), "src/main.rs").unwrap();
+        assert_eq!(file.text, "fn main() { println!(\"héllo\"); }");
     }
 
     #[test]
@@ -294,7 +395,7 @@ mod tests {
         project.write("at-limit.txt", &vec![b'a'; limit]);
         project.write("too-big.txt", &vec![b'a'; limit + 1]);
         assert_eq!(
-            read_file(&project.root(), "at-limit.txt").map(|t| t.len()),
+            read_file(&project.root(), "at-limit.txt").map(|f| f.text.len()),
             Ok(limit)
         );
         assert_eq!(
@@ -328,7 +429,7 @@ mod tests {
         ] {
             project.write(path, b"");
         }
-        let list = list_files(&project.root(), &hidden()).unwrap();
+        let list = list_files(&project.root(), &hidden(), &HashSet::new()).unwrap();
         assert_eq!(list.paths, ["README.md", "src/a/b/c.rs", "src/main.rs"]);
         assert!(!list.truncated);
     }
@@ -370,8 +471,91 @@ mod tests {
             // A link to its own parent would loop forever if followed.
             symlink("..", project.base.join("project/src/loop")).unwrap();
             // Finishing at all shows the link wasn't followed. It's a folder, so not listed.
-            let list = list_files(&project.root(), &hidden()).unwrap();
+            let list = list_files(&project.root(), &hidden(), &HashSet::new()).unwrap();
             assert_eq!(list.paths, ["src/a.rs"]);
         }
+    }
+
+    fn on_disk(project: &TestProject, path: &str) -> String {
+        fs::read_to_string(project.base.join("project").join(path)).unwrap()
+    }
+
+    #[test]
+    fn saving_replaces_the_file_and_returns_the_new_version() {
+        let project = TestProject::new();
+        project.write("src/a.rs", b"old");
+        let root = project.root();
+        let read = read_file(&root, "src/a.rs").unwrap();
+        let version = save_file(&root, "src/a.rs", "new", Some(&read.version)).unwrap();
+        assert_eq!(on_disk(&project, "src/a.rs"), "new");
+        assert_eq!(version, read_file(&root, "src/a.rs").unwrap().version);
+        // No temp file is left beside it.
+        let names: Vec<_> = fs::read_dir(project.base.join("project/src"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["a.rs"]);
+    }
+
+    #[test]
+    fn a_change_made_elsewhere_is_a_conflict_unless_overwriting() {
+        let project = TestProject::new();
+        project.write("a.txt", b"one");
+        let root = project.root();
+        let read = read_file(&root, "a.txt").unwrap();
+        project.write("a.txt", b"changed elsewhere");
+        assert_eq!(
+            save_file(&root, "a.txt", "mine", Some(&read.version)),
+            Err(CommandError::Conflict)
+        );
+        assert_eq!(on_disk(&project, "a.txt"), "changed elsewhere");
+        save_file(&root, "a.txt", "mine", None).unwrap();
+        assert_eq!(on_disk(&project, "a.txt"), "mine");
+    }
+
+    #[test]
+    fn saving_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = TestProject::new();
+        project.write("run.sh", b"echo hi");
+        let full = project.base.join("project/run.sh");
+        fs::set_permissions(&full, fs::Permissions::from_mode(0o755)).unwrap();
+        save_file(&project.root(), "run.sh", "echo bye", None).unwrap();
+        let mode = fs::metadata(&full).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+
+    #[test]
+    fn saving_refuses_new_files_protected_paths_symlinks_and_escapes() {
+        let project = TestProject::new();
+        project.write(".git/config", b"[core]");
+        project.write("real.txt", b"real");
+        std::os::unix::fs::symlink(
+            project.base.join("project/real.txt"),
+            project.base.join("project/link.txt"),
+        )
+        .unwrap();
+        let root = project.root();
+        assert_eq!(
+            save_file(&root, "missing.txt", "x", None),
+            Err(CommandError::NotFound)
+        );
+        assert_eq!(
+            save_file(&root, ".git/config", "x", None),
+            Err(CommandError::Protected)
+        );
+        assert_eq!(
+            save_file(&root, "link.txt", "x", None),
+            Err(CommandError::ThroughSymlink)
+        );
+        assert_eq!(
+            save_file(&root, "../secret", "x", None),
+            Err(CommandError::OutsideProject)
+        );
+        assert_eq!(on_disk(&project, "real.txt"), "real");
+        assert_eq!(
+            fs::read_to_string(project.base.join("secret")).unwrap(),
+            "SECRET"
+        );
     }
 }

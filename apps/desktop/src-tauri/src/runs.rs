@@ -9,7 +9,7 @@
 
 use crate::accounts::AccountsState;
 use crate::claude::{
-    EventSink, PlanItem, Session, SessionEvent, SpawnOptions, ensure_trusted, find_claude,
+    Effort, EventSink, PlanItem, Session, SessionEvent, SpawnOptions, ensure_trusted, find_claude,
     keep_tail, spawn_session, supports_auto_mode,
 };
 use crate::error::CommandError;
@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const MAX_TASK_BYTES: usize = 20_000;
@@ -270,6 +270,16 @@ struct RunRecord {
     pr_url: Option<String>,
     /// The overall note sent with the last request for changes.
     review_note: Option<String>,
+    /// The run's own mode. Runs from before it was chosen per run have none and use the
+    /// setting.
+    #[serde(default)]
+    mode: Option<RunPermissions>,
+    /// The model picked for the run; `None` is the account's default.
+    #[serde(default)]
+    model: Option<String>,
+    /// The effort picked for the run; `None` is Claude Code's default. Set at each launch.
+    #[serde(default)]
+    effort: Option<Effort>,
 }
 
 /// An approval card waiting in a run's conversation.
@@ -317,6 +327,9 @@ pub struct RunView {
     permissions: Vec<PendingPermission>,
     /// Whether there's an earlier revision to compare with.
     has_previous: bool,
+    mode: Option<RunPermissions>,
+    model: Option<String>,
+    effort: Option<Effort>,
 }
 
 impl RunRecord {
@@ -350,6 +363,9 @@ impl RunRecord {
             permissions: live.map(|l| l.permissions.clone()).unwrap_or_default(),
             has_previous: self.snapshots.len() >= 2
                 || self.snapshots.iter().any(|s| s.revision < self.revision),
+            mode: self.mode,
+            model: self.model.clone(),
+            effort: self.effort,
         }
     }
 }
@@ -720,14 +736,14 @@ fn launch(
         .or_else(find_claude)
         .ok_or(CommandError::ClaudeNotFound)?;
     let settings = inner.settings();
-    let (mode, allowed_tools) = match settings.run_permissions {
-        RunPermissions::Auto if supports_auto_mode(&claude) => ("auto", Vec::new()),
-        RunPermissions::Auto => (
-            "acceptEdits",
-            SAFE_COMMANDS.iter().map(|c| c.to_string()).collect(),
-        ),
-        RunPermissions::AcceptEdits => ("acceptEdits", Vec::new()),
-        RunPermissions::Ask => ("default", Vec::new()),
+    let auto = supports_auto_mode(&claude);
+    let wanted = run.mode.unwrap_or(settings.run_permissions);
+    let mode = mode_flag(wanted, auto);
+    // Without auto mode, safe commands are allowed up front so the run isn't stuck asking.
+    let allowed_tools = if wanted == RunPermissions::Auto && !auto {
+        SAFE_COMMANDS.iter().map(|c| c.to_string()).collect()
+    } else {
+        Vec::new()
     };
     let ask = serde_json::json!({ "permissions": { "ask": ask_rules(&settings.deny_list) } });
     let options = SpawnOptions {
@@ -737,6 +753,7 @@ fn launch(
         allowed_tools,
         replay: true,
         append_prompt: Some(run_prompt(&run.branch, &run.base, run.has_worktree)),
+        effort: run.effort,
     };
     let generation = inner.next_id.fetch_add(1, Ordering::Relaxed);
     let sink_inner = Arc::clone(inner);
@@ -750,6 +767,13 @@ fn launch(
         &options,
         sink,
     )?;
+    // A control message, never a CLI argument. `claude` reads it after `initialize`.
+    if let Some(model) = &run.model {
+        session.control(
+            "model",
+            serde_json::json!({ "subtype": "set_model", "model": model }),
+        )?;
+    }
     store.live.insert(
         id.to_string(),
         Live {
@@ -763,6 +787,26 @@ fn launch(
         },
     );
     Ok(())
+}
+
+/// Claude Code's name for a run's mode. Without auto mode, auto becomes accept edits.
+fn mode_flag(mode: RunPermissions, auto_available: bool) -> &'static str {
+    match mode {
+        RunPermissions::Auto if auto_available => "auto",
+        RunPermissions::Auto | RunPermissions::AcceptEdits => "acceptEdits",
+        RunPermissions::Plan => "plan",
+        RunPermissions::Ask => "default",
+    }
+}
+
+/// Whether `model` looks like a model name or alias, such as `opus` or `claude-sonnet-5-5`.
+/// `claude` refuses names it doesn't know; this keeps anything else out of the message.
+fn valid_model(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 64
+        && model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '[' | ']'))
 }
 
 /// Whether a failed turn's message is a usage limit.
@@ -861,6 +905,8 @@ impl Inner {
                     summary,
                     detail,
                     outside,
+                    // Runs keep the plain card: their views are re-sent on every update.
+                    proposal: _,
                 } => {
                     if let Some(live) = live {
                         live.permissions.push(PendingPermission {
@@ -1298,7 +1344,7 @@ fn detect_checks(workdir: &Path) -> Vec<String> {
     if exists("Cargo.toml") {
         checks.push("cargo test".to_string());
     }
-    if let Ok(text) = files::read_file(&root, "package.json") {
+    if let Ok(text) = files::read_file(&root, "package.json").map(|f| f.text) {
         let test = serde_json::from_str::<Value>(&text)
             .ok()
             .and_then(|json| json["scripts"]["test"].as_str().map(str::to_string));
@@ -1318,7 +1364,7 @@ fn detect_checks(workdir: &Path) -> Vec<String> {
     }
     if exists("pytest.ini") || exists("conftest.py") {
         checks.push("pytest".to_string());
-    } else if let Ok(text) = files::read_file(&root, "pyproject.toml")
+    } else if let Ok(text) = files::read_file(&root, "pyproject.toml").map(|f| f.text)
         && text.contains("pytest")
     {
         checks.push("pytest".to_string());
@@ -1580,10 +1626,11 @@ pub struct NewRunInfo {
 
 #[tauri::command(async)]
 pub fn new_run_info(
+    window: WebviewWindow,
     projects: State<'_, ProjectState>,
     settings: State<'_, SettingsState>,
 ) -> Result<NewRunInfo, CommandError> {
-    let (name, folder) = projects.name_and_path()?;
+    let (name, folder) = projects.name_and_path(window.label())?;
     let git = Git::find()?;
     let repo = git.repo_root(&folder)?;
     let settings = settings.current();
@@ -1599,6 +1646,24 @@ pub fn new_run_info(
     })
 }
 
+/// The mode and model the user picked for a run. `None` keeps the setting or the default.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOptions {
+    mode: Option<RunPermissions>,
+    model: Option<String>,
+    effort: Option<Effort>,
+}
+
+impl RunOptions {
+    fn checked(self) -> Result<RunOptions, CommandError> {
+        match &self.model {
+            Some(model) if !valid_model(model) => Err(CommandError::InvalidInput),
+            _ => Ok(self),
+        }
+    }
+}
+
 /// Makes the run's branch and worktree and starts Claude there with the task.
 #[allow(clippy::too_many_arguments)]
 fn create_run(
@@ -1608,6 +1673,7 @@ fn create_run(
     account: &str,
     task: &str,
     base: &str,
+    options: RunOptions,
     settings: &Settings,
     config_dir: Option<&Path>,
 ) -> Result<String, CommandError> {
@@ -1670,6 +1736,9 @@ fn create_run(
         stats: Stats::default(),
         pr_url: None,
         review_note: None,
+        mode: Some(options.mode.unwrap_or(settings.run_permissions)),
+        model: options.model,
+        effort: options.effort,
     };
     let mut store = inner.store.lock().map_err(|_| CommandError::Internal)?;
     store.runs.push(record);
@@ -1698,6 +1767,7 @@ fn create_run(
 #[tauri::command(async)]
 pub fn start_run(
     app: AppHandle,
+    window: WebviewWindow,
     projects: State<'_, ProjectState>,
     trust: State<'_, TrustState>,
     accounts: State<'_, AccountsState>,
@@ -1706,15 +1776,23 @@ pub fn start_run(
     account: String,
     task: String,
     base: String,
+    options: RunOptions,
 ) -> Result<RunView, CommandError> {
     let task = task.trim().to_string();
     if task.is_empty() || task.len() > MAX_TASK_BYTES {
         return Err(CommandError::InvalidInput);
     }
+    let options = options.checked()?;
     // Looked up by id: the webview never names a config folder.
     let config_dir = accounts.config_dir(&account)?;
-    let folder = ensure_trusted(&app, &projects, &trust, "Trust and Start Run")?;
-    let project_name = projects.name_and_path()?.0;
+    let folder = ensure_trusted(
+        &app,
+        &projects,
+        window.label(),
+        &trust,
+        "Trust and Start Run",
+    )?;
+    let project_name = projects.name_and_path(window.label())?.0;
     let inner = &runs.0;
     let id = create_run(
         inner,
@@ -1723,6 +1801,7 @@ pub fn start_run(
         &account,
         &task,
         &base,
+        options,
         &settings.current(),
         config_dir.as_deref(),
     )?;
@@ -1769,6 +1848,54 @@ pub fn run_transcript(runs: State<'_, RunsState>, id: String) -> Result<Vec<Valu
         .iter()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect())
+}
+
+/// Changes a run's mode, model or effort. A running `claude` switches mode and model at
+/// once, by control message; effort, and anything set while it's stopped, apply at the next
+/// launch.
+#[tauri::command(async)]
+pub fn set_run_options(
+    runs: State<'_, RunsState>,
+    id: String,
+    options: RunOptions,
+) -> Result<(), CommandError> {
+    let options = options.checked()?;
+    let inner = &runs.0;
+    let mut store = inner.store.lock().map_err(|_| CommandError::Internal)?;
+    let record = run_mut(&mut store, &id)?;
+    // Nothing more runs once a run is approved or applied.
+    if matches!(record.state, RunState::Approved | RunState::Applied) {
+        return Err(CommandError::WrongState);
+    }
+    if let Some(mode) = options.mode {
+        record.mode = Some(mode);
+    }
+    if let Some(model) = &options.model {
+        record.model = Some(model.clone());
+    }
+    // `claude` takes effort only at start, so it applies from the run's next launch.
+    if let Some(effort) = options.effort {
+        record.effort = Some(effort);
+    }
+    if let Some(live) = store.live.get(&id) {
+        if let Some(mode) = options.mode {
+            let claude = inner.claude_path.clone().or_else(find_claude);
+            let auto = claude.is_some_and(|c| supports_auto_mode(&c));
+            live.session.control(
+                "mode",
+                serde_json::json!({ "subtype": "set_permission_mode", "mode": mode_flag(mode, auto) }),
+            )?;
+        }
+        if let Some(model) = &options.model {
+            live.session.control(
+                "model",
+                serde_json::json!({ "subtype": "set_model", "model": model }),
+            )?;
+        }
+    }
+    inner.save(&store);
+    inner.changed(&store, &id);
+    Ok(())
 }
 
 /// Sends a message to a run. While it works, Claude reads it at its next step. In review,
@@ -2255,9 +2382,10 @@ fn discard(inner: &Inner, run: &RunRecord) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Opens the run's worktree as the project in Editor mode.
+/// Opens the run's worktree as the project in Editor mode, in the window that asked.
 #[tauri::command(async)]
 pub fn open_run_in_editor(
+    window: WebviewWindow,
     projects: State<'_, ProjectState>,
     sessions: State<'_, crate::claude::SessionState>,
     runs: State<'_, RunsState>,
@@ -2271,7 +2399,7 @@ pub fn open_run_in_editor(
         return Err(CommandError::NotFound);
     }
     let name = format!("{} · {}", run.project_name, run.branch);
-    projects.open_folder(&run.workdir, name, &sessions)
+    projects.open_folder(&window, &run.workdir, name, &sessions)
 }
 
 #[cfg(test)]
@@ -2289,6 +2417,20 @@ mod tests {
             state,
             reply: None,
         }
+    }
+
+    #[test]
+    fn modes_map_to_claude_code_names_and_models_are_checked() {
+        assert_eq!(mode_flag(RunPermissions::Auto, true), "auto");
+        assert_eq!(mode_flag(RunPermissions::Auto, false), "acceptEdits");
+        assert_eq!(mode_flag(RunPermissions::Plan, true), "plan");
+        assert_eq!(mode_flag(RunPermissions::Ask, true), "default");
+        assert!(valid_model("opus"));
+        assert!(valid_model("claude-sonnet-5-5"));
+        assert!(valid_model("opus[1m]"));
+        assert!(!valid_model(""));
+        assert!(!valid_model("opus --dangerously-skip-permissions"));
+        assert!(!valid_model(&"a".repeat(65)));
     }
 
     #[test]
@@ -2538,6 +2680,7 @@ done
             "default",
             "Say hello",
             "main",
+            RunOptions::default(),
             &settings,
             None,
         )
@@ -2611,6 +2754,7 @@ done
             "default",
             task,
             "main",
+            RunOptions::default(),
             &Settings::default(),
             None,
         )

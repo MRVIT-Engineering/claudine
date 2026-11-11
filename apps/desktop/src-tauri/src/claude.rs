@@ -8,8 +8,11 @@
 
 use crate::accounts::{AccountsState, use_account};
 use crate::error::CommandError;
+use crate::images::{PastedImage, user_message};
 use crate::project::ProjectState;
+use crate::proposal::{Proposal, propose};
 use crate::trust::TrustState;
+use my_editor_core::path_guard::ProjectRoot;
 use serde::{Deserialize, Serialize};
 // LEARN: `Value` is untyped JSON, like `unknown` after `JSON.parse`; `json!` builds one.
 use serde_json::{Value, json};
@@ -17,12 +20,12 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 /// The longest message the composer may send.
@@ -72,6 +75,8 @@ pub enum SessionEvent {
         summary: String,
         detail: String,
         outside: bool,
+        /// The file before and after, for a Write or Edit inside the project.
+        proposal: Option<Proposal>,
     },
     /// `claude` withdrew a permission request, for example after an interrupt.
     PermissionClosed {
@@ -152,6 +157,8 @@ pub struct SpawnOptions {
     pub replay: bool,
     /// Added to Claude Code's system prompt, to tell a run where it works.
     pub append_prompt: Option<String>,
+    /// How hard Claude thinks. `claude` has no control message for it, so it's set at start.
+    pub effort: Option<Effort>,
 }
 
 impl SpawnOptions {
@@ -164,9 +171,37 @@ impl SpawnOptions {
             allowed_tools: Vec::new(),
             replay: false,
             append_prompt: None,
+            effort: None,
         }
     }
 }
+
+/// Claude Code's effort levels, as `--effort` takes them. Serde refuses anything else, so the
+/// webview can only pick one of these.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl Effort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::Xhigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
+/// The effort levels Claudine knows, to filter what a model says it supports.
+const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// One entry of `claude`'s model list. `value` is what `set_model` takes.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -174,6 +209,8 @@ pub struct ModelOption {
     value: String,
     name: String,
     description: String,
+    /// The effort levels this model takes; empty when it has none.
+    efforts: Vec<String>,
 }
 
 /// The modes Claudine offers. `bypassPermissions`, `auto` and `dontAsk` are left out:
@@ -213,6 +250,24 @@ pub struct Session {
     child: Arc<Mutex<Child>>,
     handles: Handles,
     next_request: AtomicU64,
+    /// Set when this process is being replaced, so its exit isn't reported as the end.
+    quiet: Arc<AtomicBool>,
+    /// What `restart` needs to start the same conversation again.
+    relaunch: Relaunch,
+}
+
+/// A session's settings, kept so it can start again with `--resume` and a new effort.
+struct Relaunch {
+    claude: PathBuf,
+    folder: PathBuf,
+    config_dir: Option<PathBuf>,
+    sink: EventSink,
+    /// Claude Code's session id, from its `init` message.
+    session_id: Arc<Mutex<Option<String>>>,
+    /// The mode `claude` last reported, which can change by itself when plan mode ends.
+    mode: Arc<Mutex<String>>,
+    /// The model value the user last picked, if any.
+    model: Mutex<Option<String>>,
 }
 
 impl Session {
@@ -249,6 +304,56 @@ impl Session {
     pub fn interrupt(&self) -> Result<(), CommandError> {
         self.control("interrupt", json!({ "subtype": "interrupt" }))
     }
+
+    /// Starts the same conversation again with another effort, keeping its mode and model.
+    /// The caller replaces this session with the result, which stops this process quietly.
+    fn restart(&self, effort: Effort) -> Result<Session, CommandError> {
+        let r = &self.relaunch;
+        let resume = r
+            .session_id
+            .lock()
+            .map_err(|_| CommandError::Internal)?
+            .clone();
+        let mode = r.mode.lock().map_err(|_| CommandError::Internal)?.clone();
+        let model = r.model.lock().map_err(|_| CommandError::Internal)?.clone();
+        let options = SpawnOptions {
+            // Only modes Claudine offers; anything else starts in the default one.
+            mode: match mode.as_str() {
+                "acceptEdits" => "acceptEdits",
+                "plan" => "plan",
+                _ => "default",
+            },
+            resume,
+            effort: Some(effort),
+            ..SpawnOptions::editor()
+        };
+        self.quiet.store(true, Ordering::Relaxed);
+        let session = spawn_session(
+            &r.claude,
+            &r.folder,
+            &self.account,
+            r.config_dir.as_deref(),
+            &options,
+            Arc::clone(&r.sink),
+        );
+        let session = match session {
+            Ok(session) => session,
+            Err(error) => {
+                self.quiet.store(false, Ordering::Relaxed);
+                return Err(error);
+            }
+        };
+        if let Some(model) = model {
+            // A value `claude` listed earlier, checked by `set_model`.
+            session.control("model", json!({ "subtype": "set_model", "model": model }))?;
+            *session
+                .relaunch
+                .model
+                .lock()
+                .map_err(|_| CommandError::Internal)? = Some(model);
+        }
+        Ok(session)
+    }
 }
 
 impl Drop for Session {
@@ -261,32 +366,30 @@ impl Drop for Session {
     }
 }
 
-/// The session for the open project, if one is running. One at a time for now.
+/// The session running in each window, by window label. One per window.
 #[derive(Default)]
-pub struct SessionState(Mutex<Option<Session>>);
+pub struct SessionState(Mutex<HashMap<String, Session>>);
 
 impl SessionState {
-    /// Ends the current session, if any.
-    pub fn stop(&self) {
-        if let Ok(mut current) = self.0.lock() {
+    /// Ends the session in `window`, if any.
+    pub fn stop(&self, window: &str) {
+        if let Ok(mut sessions) = self.0.lock() {
             // Dropping the `Session` runs its `Drop`, which kills the process.
-            *current = None;
+            sessions.remove(window);
         }
     }
 
-    /// Ends the current session if it runs on `account`.
+    /// Ends every session that runs on `account`.
     pub fn stop_account(&self, account: &str) {
-        if let Ok(mut current) = self.0.lock()
-            && current.as_ref().is_some_and(|s| s.account == account)
-        {
-            *current = None;
+        if let Ok(mut sessions) = self.0.lock() {
+            sessions.retain(|_, session| session.account != account);
         }
     }
 
     /// Copies of the shared handles, so the session lock isn't held while writing.
-    fn handles(&self) -> Result<Handles, CommandError> {
-        let current = self.0.lock().map_err(|_| CommandError::Internal)?;
-        match current.as_ref() {
+    fn handles(&self, window: &str) -> Result<Handles, CommandError> {
+        let sessions = self.0.lock().map_err(|_| CommandError::Internal)?;
+        match sessions.get(window) {
             // LEARN: cloning an `Arc` copies the pointer and bumps a count; the data is shared.
             Some(session) => Ok(session.handles.clone()),
             None => Err(CommandError::NoSession),
@@ -375,6 +478,9 @@ pub fn spawn_session(
     if let Some(prompt) = &options.append_prompt {
         command.args(["--append-system-prompt", prompt]);
     }
+    if let Some(effort) = options.effort {
+        command.args(["--effort", effort.as_str()]);
+    }
     command
         .current_dir(folder)
         .stdin(Stdio::piped())
@@ -402,10 +508,43 @@ pub fn spawn_session(
     let tail = Arc::clone(&stderr_tail);
     thread::spawn(move || keep_tail(stderr, &tail));
 
+    let quiet = Arc::new(AtomicBool::new(false));
+    let session_id = Arc::new(Mutex::new(None));
+    let mode = Arc::new(Mutex::new(options.mode.to_string()));
+    // Notes what a restart needs, and drops everything once this process is being replaced.
+    let gated: EventSink = {
+        let (sink, quiet, session_id, mode) = (
+            Arc::clone(&on_event),
+            Arc::clone(&quiet),
+            Arc::clone(&session_id),
+            Arc::clone(&mode),
+        );
+        Arc::new(move |event| {
+            if quiet.load(Ordering::Relaxed) {
+                return;
+            }
+            match &event {
+                SessionEvent::Ready { session_id: id, .. } if !id.is_empty() => {
+                    if let Ok(mut kept) = session_id.lock() {
+                        *kept = Some(id.clone());
+                    }
+                }
+                SessionEvent::Mode { mode: now } | SessionEvent::Options { mode: now, .. } => {
+                    if let Ok(mut kept) = mode.lock() {
+                        *kept = now.clone();
+                    }
+                }
+                _ => {}
+            }
+            sink(event);
+        })
+    };
     let relay = Relay {
         handles: handles.clone(),
         root: folder.to_path_buf(),
-        on_event,
+        // Only for showing proposed edits. Without it, cards show the plain old and new text.
+        project: ProjectRoot::open(folder).ok(),
+        on_event: gated,
     };
     let reader_child = Arc::clone(&child);
     thread::spawn(move || {
@@ -429,6 +568,16 @@ pub fn spawn_session(
         child,
         handles,
         next_request: AtomicU64::new(1),
+        quiet,
+        relaunch: Relaunch {
+            claude: claude.to_path_buf(),
+            folder: folder.to_path_buf(),
+            config_dir: config_dir.map(Path::to_path_buf),
+            sink: on_event,
+            session_id,
+            mode,
+            model: Mutex::new(None),
+        },
     })
 }
 
@@ -486,6 +635,8 @@ fn write_line(stdin: &Mutex<ChildStdin>, message: &Value) -> Result<(), CommandE
 struct Relay {
     handles: Handles,
     root: PathBuf,
+    /// Reads the files that edits will change, through the path guard.
+    project: Option<ProjectRoot>,
     on_event: EventSink,
 }
 
@@ -513,6 +664,12 @@ impl Relay {
                     let tool = request["tool_name"].as_str().unwrap_or("").to_string();
                     let input = request["input"].clone();
                     let described = describe(&tool, &input, &self.root);
+                    let proposal = match &self.project {
+                        Some(project) if !described.outside => {
+                            propose(&tool, &input, &described.summary, project)
+                        }
+                        _ => None,
+                    };
                     if let Ok(mut pending) = self.handles.pending.lock() {
                         pending.insert(id.clone(), input);
                     }
@@ -522,6 +679,7 @@ impl Relay {
                         summary: described.summary,
                         detail: described.detail,
                         outside: described.outside,
+                        proposal,
                     }]
                 } else {
                     // Hook callbacks, MCP messages and the like: refuse rather than hang.
@@ -607,6 +765,17 @@ fn model_options(body: &Value) -> Vec<ModelOption> {
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| value.to_string()),
                 description: text("description"),
+                efforts: model["supportedEffortLevels"]
+                    .as_array()
+                    .map(|levels| {
+                        levels
+                            .iter()
+                            .filter_map(|level| level.as_str())
+                            .filter(|level| EFFORTS.contains(level))
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
         })
         .take(MAX_MODELS)
@@ -856,24 +1025,27 @@ pub fn claude_status() -> ClaudeStatus {
     }
 }
 
-/// Starts `claude` in the open project on `account`, replacing any running session.
+/// Starts `claude` in the window's project on `account`, replacing the window's session.
 ///
 /// The first time for each folder, Rust asks natively whether to trust it. Events then
 /// arrive on `on_event` until the process exits.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn start_session(
     app: AppHandle,
+    window: WebviewWindow,
     projects: State<'_, ProjectState>,
     trust: State<'_, TrustState>,
     accounts: State<'_, AccountsState>,
     sessions: State<'_, SessionState>,
     account: String,
+    effort: Option<Effort>,
     on_event: Channel<SessionEvent>,
 ) -> Result<(), CommandError> {
     // Looked up by id: the webview never names a config folder.
     let config_dir = accounts.config_dir(&account)?;
     let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
-    let folder = ensure_trusted(&app, &projects, &trust, "Trust and Start")?;
+    let folder = ensure_trusted(&app, &projects, window.label(), &trust, "Trust and Start")?;
 
     // Fails only if the webview is gone; there's no one left to tell.
     let sink: EventSink = Arc::new(move |event| {
@@ -884,25 +1056,29 @@ pub fn start_session(
         &folder,
         &account,
         config_dir.as_deref(),
-        &SpawnOptions::editor(),
+        &SpawnOptions {
+            effort,
+            ..SpawnOptions::editor()
+        },
         sink,
     )?;
     accounts.set_last_used(&account);
-    let mut current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
-    // Replacing the old session drops it, which stops its process.
-    *current = Some(session);
+    let mut running = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    // Replacing the window's old session drops it, which stops its process.
+    running.insert(window.label().to_string(), session);
     Ok(())
 }
 
-/// The open project's folder, once the user trusts it. The first time for each folder,
+/// The folder open in `window`, once the user trusts it. The first time for each folder,
 /// Rust asks with a native dialog the webview can't answer.
 pub fn ensure_trusted(
     app: &AppHandle,
     projects: &ProjectState,
+    window: &str,
     trust: &TrustState,
     button: &str,
 ) -> Result<PathBuf, CommandError> {
-    let (name, folder) = projects.name_and_path()?;
+    let (name, folder) = projects.name_and_path(window)?;
     if !trust.is_trusted(&folder) {
         let message = format!(
             "Claude Code will run in:\n{}\n\nA project can include settings, hooks and MCP \
@@ -924,7 +1100,7 @@ pub fn ensure_trusted(
             return Err(CommandError::NotTrusted);
         }
         // The dialog can stay open while the user opens another folder.
-        if projects.name_and_path()?.1 != folder {
+        if projects.name_and_path(window)?.1 != folder {
             return Err(CommandError::NoProject);
         }
         trust.trust(&folder)?;
@@ -933,28 +1109,34 @@ pub fn ensure_trusted(
 }
 
 #[tauri::command(async)]
-pub fn send_message(sessions: State<'_, SessionState>, text: String) -> Result<(), CommandError> {
+pub fn send_message(
+    window: WebviewWindow,
+    sessions: State<'_, SessionState>,
+    text: String,
+    images: Option<Vec<PastedImage>>,
+) -> Result<(), CommandError> {
     if text.len() > MAX_MESSAGE_BYTES {
         return Err(CommandError::TooLarge);
     }
-    if text.trim().is_empty() {
+    let images = images.unwrap_or_default();
+    if text.trim().is_empty() && images.is_empty() {
         return Ok(());
     }
-    let handles = sessions.handles()?;
-    write_line(
-        &handles.stdin,
-        &json!({ "type": "user", "message": { "role": "user", "content": text } }),
-    )
+    // Checked before the session is looked up, so a bad image never reaches `claude`.
+    let message = user_message(&text, &images)?;
+    let handles = sessions.handles(window.label())?;
+    write_line(&handles.stdin, &message)
 }
 
 /// Answers one permission request. Each request can be answered once.
 #[tauri::command(async)]
 pub fn answer_permission(
+    window: WebviewWindow,
     sessions: State<'_, SessionState>,
     id: String,
     allow: bool,
 ) -> Result<(), CommandError> {
-    answer(&sessions.handles()?, &id, allow)
+    answer(&sessions.handles(window.label())?, &id, allow)
 }
 
 fn answer(handles: &Handles, id: &str, allow: bool) -> Result<(), CommandError> {
@@ -978,28 +1160,43 @@ fn answer(handles: &Handles, id: &str, allow: bool) -> Result<(), CommandError> 
 }
 
 /// Sends Claudine's own control request. `kind` goes in the id, to match the answer.
-fn send_control(sessions: &SessionState, kind: &str, request: Value) -> Result<(), CommandError> {
-    let current = sessions.0.lock().map_err(|_| CommandError::Internal)?;
-    current
-        .as_ref()
+fn send_control(
+    sessions: &SessionState,
+    window: &str,
+    kind: &str,
+    request: Value,
+) -> Result<(), CommandError> {
+    let running = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    running
+        .get(window)
         .ok_or(CommandError::NoSession)?
         .control(kind, request)
 }
 
 /// Stops the current turn, like pressing Esc in the terminal. The session stays open.
 #[tauri::command(async)]
-pub fn interrupt_session(sessions: State<'_, SessionState>) -> Result<(), CommandError> {
-    send_control(&sessions, "interrupt", json!({ "subtype": "interrupt" }))
+pub fn interrupt_session(
+    window: WebviewWindow,
+    sessions: State<'_, SessionState>,
+) -> Result<(), CommandError> {
+    send_control(
+        &sessions,
+        window.label(),
+        "interrupt",
+        json!({ "subtype": "interrupt" }),
+    )
 }
 
 /// Switches the permission mode. Serde refuses any mode not in `PermissionMode`.
 #[tauri::command(async)]
 pub fn set_mode(
+    window: WebviewWindow,
     sessions: State<'_, SessionState>,
     mode: PermissionMode,
 ) -> Result<(), CommandError> {
     send_control(
         &sessions,
+        window.label(),
         "mode",
         json!({ "subtype": "set_permission_mode", "mode": mode.as_str() }),
     )
@@ -1007,13 +1204,98 @@ pub fn set_mode(
 
 /// Switches the model, to one of those `claude` listed.
 #[tauri::command(async)]
-pub fn set_model(sessions: State<'_, SessionState>, model: String) -> Result<(), CommandError> {
-    check_model(&sessions.handles()?, &model)?;
-    send_control(
-        &sessions,
-        "model",
-        json!({ "subtype": "set_model", "model": model }),
-    )
+pub fn set_model(
+    window: WebviewWindow,
+    sessions: State<'_, SessionState>,
+    model: String,
+) -> Result<(), CommandError> {
+    check_model(&sessions.handles(window.label())?, &model)?;
+    let running = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    let session = running.get(window.label()).ok_or(CommandError::NoSession)?;
+    session.control("model", json!({ "subtype": "set_model", "model": model }))?;
+    *session
+        .relaunch
+        .model
+        .lock()
+        .map_err(|_| CommandError::Internal)? = Some(model);
+    Ok(())
+}
+
+/// Changes the Editor chat's effort. `claude` only takes it at start, so the session starts
+/// again with `--resume`: the conversation, mode and model carry on.
+#[tauri::command(async)]
+pub fn set_effort(
+    window: WebviewWindow,
+    sessions: State<'_, SessionState>,
+    effort: Effort,
+) -> Result<(), CommandError> {
+    let mut running = sessions.0.lock().map_err(|_| CommandError::Internal)?;
+    let session = running.get(window.label()).ok_or(CommandError::NoSession)?;
+    let replacement = session.restart(effort)?;
+    // Replacing drops the old session, which kills its process. Its events are muted.
+    running.insert(window.label().to_string(), replacement);
+    Ok(())
+}
+
+/// The model lists `claude` gave, per account, so the Agentic tab can show them before any
+/// session runs.
+#[derive(Default)]
+pub struct ModelsState(Mutex<HashMap<String, Vec<ModelOption>>>);
+
+/// The models `account` can use, as `claude` lists them. The first time, Rust starts
+/// `claude` in an empty folder of its own just to ask, then stops it; nothing is sent to a
+/// model. An empty list means this Claude Code doesn't say.
+#[tauri::command(async)]
+pub fn list_models(
+    app: AppHandle,
+    accounts: State<'_, AccountsState>,
+    models: State<'_, ModelsState>,
+    account: String,
+) -> Result<Vec<ModelOption>, CommandError> {
+    if let Some(known) = models
+        .0
+        .lock()
+        .map_err(|_| CommandError::Internal)?
+        .get(&account)
+    {
+        return Ok(known.clone());
+    }
+    let config_dir = accounts.config_dir(&account)?;
+    let claude = find_claude().ok_or(CommandError::ClaudeNotFound)?;
+    // Never a project folder, so no project's `.claude/` settings or hooks run.
+    let folder = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| CommandError::Internal)?
+        .join("model-list");
+    std::fs::create_dir_all(&folder)?;
+    let (send, receive) = std::sync::mpsc::channel();
+    let sink: EventSink = Arc::new(move |event| {
+        if let SessionEvent::Options { models, .. } = event {
+            let _ = send.send(models);
+        }
+    });
+    let session = spawn_session(
+        &claude,
+        &folder,
+        &account,
+        config_dir.as_deref(),
+        &SpawnOptions::editor(),
+        sink,
+    )?;
+    let listed = receive
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .unwrap_or_default();
+    // Dropping it kills the process.
+    drop(session);
+    if !listed.is_empty() {
+        models
+            .0
+            .lock()
+            .map_err(|_| CommandError::Internal)?
+            .insert(account, listed.clone());
+    }
+    Ok(listed)
 }
 
 fn check_model(handles: &Handles, model: &str) -> Result<(), CommandError> {
@@ -1026,8 +1308,8 @@ fn check_model(handles: &Handles, model: &str) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-pub fn stop_session(sessions: State<'_, SessionState>) {
-    sessions.stop();
+pub fn stop_session(window: WebviewWindow, sessions: State<'_, SessionState>) {
+    sessions.stop(window.label());
 }
 
 #[cfg(test)]
@@ -1300,6 +1582,7 @@ printf '%s\n' "$answer" > answer.json
                 models: Arc::new(Mutex::new(Vec::new())),
             },
             root: root(),
+            project: None,
             on_event: Arc::new(|_| {}),
         };
         (relay, child)
@@ -1320,7 +1603,8 @@ printf '%s\n' "$answer" > answer.json
                 "current_permission_mode": "default",
                 "models": [
                     { "value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5" },
-                    { "value": "sonnet", "displayName": "Sonnet 5.5", "description": "Fast" },
+                    { "value": "sonnet", "displayName": "Sonnet 5.5", "description": "Fast",
+                      "supportedEffortLevels": ["low", "max", "--dangerously-skip-permissions"] },
                     { "value": "" },
                     { "displayName": "No value" }
                 ]
@@ -1334,6 +1618,9 @@ printf '%s\n' "$answer" > answer.json
         let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
         assert_eq!(values, ["default", "sonnet"]);
         assert_eq!(models[1].name, "Sonnet 5.5");
+        // Only known effort levels are kept.
+        assert_eq!(models[1].efforts, ["low", "max"]);
+        assert!(models[0].efforts.is_empty());
 
         assert_eq!(check_model(&relay.handles, "sonnet"), Ok(()));
         for model in ["claude-3-opus", "sonnet --dangerously-skip-permissions", ""] {

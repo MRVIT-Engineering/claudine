@@ -539,16 +539,17 @@ function AgenticSection() {
         setting="prePrReview"
       />
       <SettingRow
-        title="Permissions during a run"
+        title="Default mode for new runs"
         text="Pushing, installing packages, deleting files, web access and your deny list always ask."
       >
         <Segmented
-          label="Permissions during a run"
+          label="Default mode for new runs"
           value={state.settings.runPermissions}
           options={[
             { value: "auto", label: "Auto" },
             { value: "acceptEdits", label: "Accept edits" },
-            { value: "ask", label: "Ask each time" },
+            { value: "plan", label: "Plan" },
+            { value: "ask", label: "Manual" },
           ]}
           onChange={(runPermissions) => updateSettings({ runPermissions })}
         />

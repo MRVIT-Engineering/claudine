@@ -6,6 +6,7 @@
 
 use crate::error::CommandError;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -119,6 +120,72 @@ impl Git {
             .run(dir, &["rev-parse", "--show-toplevel"])
             .map_err(|_| CommandError::NotARepository)?;
         Ok(PathBuf::from(root.trim_end_matches(['\n', '\r'])))
+    }
+
+    /// Gitignored files and folders under `dir`, relative to it, `/`-separated. An ignored
+    /// folder is listed once, without what's inside it.
+    pub fn ignored(&self, dir: &Path) -> Result<HashSet<String>, CommandError> {
+        let out = self.run(
+            dir,
+            &[
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+            ],
+        )?;
+        Ok(out
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(|path| path.trim_end_matches('/').to_string())
+            .collect())
+    }
+
+    /// Who last changed line `line` (1-based) of `path`, relative to `dir`. With `contents`,
+    /// git blames that text instead of the file on disk, so an edited buffer's line numbers
+    /// still match. Read-only. `None` when the file isn't tracked or the line doesn't exist.
+    pub fn blame_line(
+        &self,
+        dir: &Path,
+        path: &str,
+        line: u32,
+        contents: Option<&str>,
+    ) -> Result<Option<Blame>, CommandError> {
+        let range = format!("{line},{line}");
+        let mut args = vec!["blame", "--porcelain", "-L", &range];
+        if contents.is_some() {
+            args.extend(["--contents", "-"]);
+        }
+        // `--` so a path can never be read as an option.
+        args.extend(["--", path]);
+        let mut command = self.command(dir, &args);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        if contents.is_some() {
+            command.stdin(Stdio::piped());
+        }
+        let mut child = command.spawn().map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => CommandError::GitNotFound,
+            other => CommandError::from(other),
+        })?;
+        if let (Some(text), Some(mut stdin)) = (contents, child.stdin.take()) {
+            // From its own thread, so a full pipe can't block both sides.
+            let text = text.to_string();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            });
+        }
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let me = self.run(dir, &["config", "user.email"]).unwrap_or_default();
+        Ok(parse_blame(
+            &String::from_utf8_lossy(&output.stdout),
+            me.trim(),
+        ))
     }
 
     /// The checked-out branch, or `None` when HEAD is detached.
@@ -633,6 +700,54 @@ fn build_diff(stats: &[Stat], patch: &str) -> Vec<FileDiff> {
         .collect()
 }
 
+/// One line's last change, for the editor's inline blame.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Blame {
+    /// The short commit id; empty when the line isn't committed yet.
+    pub commit: String,
+    pub author: String,
+    /// Whether the author's email is the user's own `user.email`.
+    pub is_you: bool,
+    /// Seconds since the Unix epoch.
+    pub time: u64,
+    pub summary: String,
+}
+
+/// Reads `git blame --porcelain` for one line. `me` is the user's email, to say "You".
+fn parse_blame(out: &str, me: &str) -> Option<Blame> {
+    let mut lines = out.lines();
+    let commit = lines.next()?.split(' ').next()?.to_string();
+    let mut blame = Blame {
+        commit: String::new(),
+        author: String::new(),
+        is_you: false,
+        time: 0,
+        summary: String::new(),
+    };
+    for line in lines {
+        // The line's own text comes last, after a tab.
+        if line.starts_with('\t') {
+            break;
+        }
+        if let Some(author) = line.strip_prefix("author ") {
+            blame.author = author.to_string();
+        } else if let Some(mail) = line.strip_prefix("author-mail ") {
+            let mail = mail.trim_start_matches('<').trim_end_matches('>');
+            blame.is_you = !me.is_empty() && mail.eq_ignore_ascii_case(me);
+        } else if let Some(time) = line.strip_prefix("author-time ") {
+            blame.time = time.parse().unwrap_or(0);
+        } else if let Some(summary) = line.strip_prefix("summary ") {
+            blame.summary = summary.to_string();
+        }
+    }
+    // All zeros: changed in the working tree, not committed.
+    if !commit.chars().all(|c| c == '0') {
+        blame.commit = commit.chars().take(8).collect();
+    }
+    Some(blame)
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -801,5 +916,74 @@ pub mod tests {
         assert_eq!(hunk_starts("@@ -12,7 +14,9 @@ fn x"), (12, 14));
         assert_eq!(hunk_starts("@@ -0,0 +1 @@"), (0, 1));
         assert_eq!(pr_number("https://github.com/o/r/pull/42"), Some(42));
+    }
+
+    #[test]
+    fn ignored_lists_gitignored_files_and_folders_once() {
+        let (git, repo) = temp_repo("ignored");
+        fs::write(repo.join(".gitignore"), "dist/\n*.log\n").unwrap();
+        fs::create_dir_all(repo.join("dist/deep")).unwrap();
+        fs::write(repo.join("dist/deep/a.js"), "x").unwrap();
+        fs::write(repo.join("debug.log"), "x").unwrap();
+        fs::write(repo.join("kept.txt"), "x").unwrap();
+        let ignored = git.ignored(&repo).unwrap();
+        assert!(ignored.contains("dist"));
+        assert!(ignored.contains("debug.log"));
+        assert!(!ignored.contains("kept.txt"));
+        assert!(!ignored.iter().any(|p| p.starts_with("dist/")));
+    }
+
+    #[test]
+    fn blame_names_the_commit_and_marks_uncommitted_lines() {
+        let out = "1234567890abcdef1234567890abcdef12345678 3 3 1\n\
+                   author Ada Lovelace\n\
+                   author-mail <ada@example.com>\n\
+                   author-time 1700000000\n\
+                   summary Fix the engine\n\
+                   \tlet x = 1;\n";
+        let blame = parse_blame(out, "ADA@example.com").unwrap();
+        assert_eq!(blame.commit, "12345678");
+        assert_eq!(blame.author, "Ada Lovelace");
+        assert!(blame.is_you);
+        assert_eq!(blame.time, 1_700_000_000);
+        assert_eq!(blame.summary, "Fix the engine");
+
+        let out = "0000000000000000000000000000000000000000 1 1 1\n\
+                   author Not Committed Yet\n\
+                   summary Version of a.rs from a.rs\n";
+        let blame = parse_blame(out, "").unwrap();
+        assert_eq!(blame.commit, "");
+        assert!(!blame.is_you);
+        assert_eq!(parse_blame("", "me"), None);
+    }
+
+    #[test]
+    fn blame_line_reads_a_committed_and_an_edited_buffer() {
+        let (git, repo) = temp_repo("blame");
+        fs::write(repo.join("b.txt"), "one\ntwo\n").unwrap();
+        git.run(&repo, &["add", "b.txt"]).unwrap();
+        git.run(
+            &repo,
+            &[
+                "-c",
+                "user.name=Ada",
+                "-c",
+                "user.email=ada@example.com",
+                "commit",
+                "-qm",
+                "Add b",
+            ],
+        )
+        .unwrap();
+        let blame = git.blame_line(&repo, "b.txt", 2, None).unwrap().unwrap();
+        assert_eq!(blame.author, "Ada");
+        assert_eq!(blame.summary, "Add b");
+        // A line added in the buffer isn't committed.
+        let edited = git
+            .blame_line(&repo, "b.txt", 1, Some("new\none\ntwo\n"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(edited.commit, "");
+        assert_eq!(git.blame_line(&repo, "missing.txt", 1, None).unwrap(), None);
     }
 }

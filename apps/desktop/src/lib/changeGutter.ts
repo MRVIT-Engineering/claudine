@@ -5,6 +5,7 @@ import {
   type Extension,
   type Range,
   RangeSet,
+  StateEffect,
   StateField,
   Text,
 } from "@codemirror/state";
@@ -25,11 +26,15 @@ const CHANGED = new ChangeMarker("change");
 const DELETED = new ChangeMarker("del");
 
 interface Changes {
+  base: Text;
   chunks: readonly Chunk[];
   markers: RangeSet<GutterMarker>;
 }
 
-function markersFor(chunks: readonly Chunk[], doc: Text): Changes {
+/** Makes the current text the new original, after a save. */
+export const markSaved = StateEffect.define<null>();
+
+function markersFor(base: Text, chunks: readonly Chunk[], doc: Text): Changes {
   const ranges: Range<GutterMarker>[] = [];
   for (const chunk of chunks) {
     if (chunk.fromB === chunk.toB) {
@@ -45,18 +50,27 @@ function markersFor(chunks: readonly Chunk[], doc: Text): Changes {
       ranges.push(marker.range(doc.line(n).from));
     }
   }
-  return { chunks, markers: RangeSet.of(ranges, true) };
+  return { base, chunks, markers: RangeSet.of(ranges, true) };
 }
 
 /** The change bar, measured against `original`: the file's text when it was opened. */
 export function changeGutter(original: string): Extension {
   const base = Text.of(original.split(/\r\n?|\n/));
   const field = StateField.define<Changes>({
-    create: (state) => markersFor(Chunk.build(base, state.doc), state.doc),
+    create: (state) =>
+      markersFor(base, Chunk.build(base, state.doc), state.doc),
     update(value, tr) {
+      if (tr.effects.some((e) => e.is(markSaved))) {
+        return markersFor(tr.newDoc, [], tr.newDoc);
+      }
       if (!tr.docChanged) return value;
-      const chunks = Chunk.updateB(value.chunks, base, tr.newDoc, tr.changes);
-      return markersFor(chunks, tr.newDoc);
+      const chunks = Chunk.updateB(
+        value.chunks,
+        value.base,
+        tr.newDoc,
+        tr.changes,
+      );
+      return markersFor(value.base, chunks, tr.newDoc);
     },
   });
   return [

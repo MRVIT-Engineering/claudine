@@ -25,7 +25,8 @@ import {
 } from "@codemirror/view";
 import { createEffect, onCleanup, onMount } from "solid-js";
 import { setActiveEditor } from "../lib/activeEditor";
-import { buffers } from "../lib/buffers";
+import { inlineBlame } from "../lib/blame";
+import { buffers, views } from "../lib/buffers";
 import { changeGutter } from "../lib/changeGutter";
 import {
   createEditorRoot,
@@ -94,13 +95,15 @@ function cursorInfo(editorState: EditorState): CursorInfo {
   };
 }
 
-function createState(path: string, text: string) {
+/** `text` is the file as saved, for the unsaved check and change bar; `doc` defaults to it. */
+function createState(path: string, text: string, doc = text) {
   return EditorState.create({
-    doc: text,
+    doc,
     extensions: [
       sharedExtensions,
       // First, so the change bar is the leftmost gutter.
       changeGutter(text),
+      inlineBlame(path, () => appState.dirty[path] === true),
       language.of(languageFor(path)),
       preferences.of(preferenceExtensions(appState.settings)),
       history(),
@@ -113,13 +116,14 @@ function createState(path: string, text: string) {
         ...historyKeymap,
         ...searchKeymap,
         indentWithTab,
-        // Stops the webview's own handling. Saving needs the Rust backend.
-        { key: "Mod-s", run: () => true },
       ]),
       EditorView.contentAttributes.of({ "aria-label": `Editing ${path}` }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          setDirty(path, update.state.doc.toString() !== text);
+          // Against the last saved text, which a save updates.
+          const saved = appState.files[path];
+          const base = saved?.status === "ready" ? saved.value : text;
+          setDirty(path, update.state.doc.toString() !== base);
         }
         if (update.docChanged || update.selectionSet) {
           setCursor(cursorInfo(update.state));
@@ -139,13 +143,19 @@ export function CodeEditor(props: { path: string; text: string }) {
   onMount(() => {
     const root = createEditorRoot(host);
     const cached = buffers.get(props.path);
+    // A state kept from before a hot reload in `pnpm dev` uses the old module's slots, so a
+    // language can't attach to it. Start fresh with its text instead.
+    const usable = cached && language.get(cached.state) !== undefined;
     const editor = new EditorView({
-      state: cached?.state ?? createState(props.path, props.text),
-      scrollTo: cached?.scroll,
+      state: usable
+        ? cached.state
+        : createState(props.path, props.text, cached?.state.doc.toString()),
+      scrollTo: usable ? cached.scroll : undefined,
       parent: root,
       root,
     });
     view = editor;
+    views.set(props.path, editor);
     setActiveEditor(editor);
     setCursor(cursorInfo(editor.state));
     void loadLanguage(props.path).then((extension) => {
@@ -185,6 +195,7 @@ export function CodeEditor(props: { path: string; text: string }) {
 
   onCleanup(() => {
     if (view) {
+      if (views.get(props.path) === view) views.delete(props.path);
       buffers.set(props.path, {
         state: view.state,
         scroll: view.scrollSnapshot(),
