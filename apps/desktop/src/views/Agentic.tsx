@@ -20,7 +20,7 @@ import {
   type Run,
   type RunPermissions,
 } from "../backend";
-import { ChatInput } from "../components/ChatInput";
+import { accountOptions, ChatInput } from "../components/ChatInput";
 import { AccountBadge } from "../components/Common";
 import { CheckIcon, ChevronDown, PlusIcon } from "../components/Icons";
 import { Resizer } from "../components/Resizer";
@@ -247,7 +247,9 @@ function NewRunForm() {
   const [mode, setMode] = createSignal<string>(state.settings.runPermissions);
   const [model, setModel] = createSignal("default");
   const [effort, setEffort] = createSignal("default");
-  const account = () => accounts.selected || DEFAULT_ACCOUNT;
+  // Starts on the account last used; picking one here doesn't touch the Editor chat.
+  const [picked, setPicked] = createSignal<string | null>(null);
+  const account = () => picked() ?? (accounts.selected || DEFAULT_ACCOUNT);
   createEffect(() => void loadModels(account()));
   const base = () => {
     const info = runs.newRun;
@@ -280,6 +282,16 @@ function NewRunForm() {
         canSend={base() !== "" && !runs.busy.new}
         onSend={start}
         onEscape={runs.list.length > 0 ? cancelNewRun : undefined}
+        account={{
+          value: account(),
+          title: "The run's account. It can't change once the run starts.",
+          options: accountOptions(),
+          onChange: (id) => {
+            setPicked(id);
+            setModel("default");
+            setEffort("default");
+          },
+        }}
         mode={{ value: mode(), options: runModeOptions(), onChange: setMode }}
         model={{
           value: model(),

@@ -64,8 +64,13 @@ jobs:
       - name: Install npm dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check the version matches everywhere
+        run: node scripts/check-version.mjs
+
       - name: Typecheck
-        run: pnpm --filter @my-editor/desktop typecheck
+        run: |
+          pnpm --filter @my-editor/desktop typecheck
+          pnpm --filter @my-editor/website typecheck
 
       - name: Run Biome
         run: pnpm exec biome check .

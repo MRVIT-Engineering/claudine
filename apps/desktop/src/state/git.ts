@@ -1,4 +1,5 @@
 // The Git panel's data, all from read-only git commands Rust runs in the open folder.
+import { createMemo, createRoot } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import {
   backend,
@@ -67,6 +68,43 @@ export async function refreshGit() {
   } finally {
     setGit("loading", false);
   }
+}
+
+/** Reads only the changes, for the file tree's colors. Quiet: a folder that isn't a repo has none. */
+export async function refreshGitStatus() {
+  try {
+    const status = await backend.gitStatus();
+    setGit("status", status);
+  } catch {
+    setGit("status", []);
+  }
+}
+
+/** How a path looks in the file tree: changed ("modified") or new ("added"). */
+export type TreeChange = "modified" | "added";
+
+// A folder is "modified" if anything in it changed, and "added" if everything in it is new.
+const treeChanges = createRoot(() =>
+  createMemo(() => {
+    const changes = new Map<string, TreeChange>();
+    for (const { path, status } of git.status) {
+      if (status === "D") continue;
+      const kind: TreeChange =
+        status === "?" || status === "A" ? "added" : "modified";
+      const clean = path.replace(/\/$/, "");
+      changes.set(clean, kind);
+      const parts = clean.split("/");
+      for (let i = parts.length - 1; i > 0; i--) {
+        const folder = parts.slice(0, i).join("/");
+        if (changes.get(folder) !== "modified") changes.set(folder, kind);
+      }
+    }
+    return changes;
+  }),
+);
+
+export function treeChange(path: string): TreeChange | undefined {
+  return treeChanges().get(path);
 }
 
 /** Shows `path`'s history; `null` clears it. */

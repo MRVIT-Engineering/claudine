@@ -695,7 +695,7 @@ select:focus-visible {
   padding-right: 8px;
   border-radius: 5px;
   text-align: left;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--text);
 }
 .tree-row:hover {
@@ -1009,6 +1009,7 @@ body.dragging-tab * {
   background: var(--editor);
 }
 .claude-panel .chat-scroll {
+  font-size: 14px;
   padding-inline: max(16px, calc((100% - 820px) / 2));
 }
 .claude-panel .composer {
@@ -2972,7 +2973,7 @@ body.resizing {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .claude-tool-head {
   display: flex;
@@ -4363,7 +4364,7 @@ progress::-webkit-progress-value {
 .git-section {
   margin: 12px 6px 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4377,7 +4378,7 @@ progress::-webkit-progress-value {
   padding: 4px 6px;
   border-radius: 5px;
   text-align: left;
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 .git-row:hover {
   background: var(--hover);
@@ -4401,7 +4402,7 @@ progress::-webkit-progress-value {
 }
 .git-byline {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .git-byline code {
   font: 10.5px var(--font-code);
@@ -4437,21 +4438,30 @@ progress::-webkit-progress-value {
   flex: 1;
   min-width: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .git-empty {
   margin: 4px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .git-error {
   margin: 6px 12px;
   color: var(--red);
-  font-size: 12px;
+  font-size: 13px;
 }
 .git-diff {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Git status in the file tree: changed files and folders yellow, new ones green. */
+.tree-row.git-modified .tree-name {
+  color: var(--amber);
+}
+
+.tree-row.git-added .tree-name {
+  color: var(--green);
 }

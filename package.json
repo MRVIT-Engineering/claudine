@@ -1,6 +1,7 @@
 {
   "name": "my-editor",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@12.16.1",
   "engines": {
     "node": ">=22.12.0"
@@ -9,9 +10,12 @@
     "tauri": "pnpm --filter @my-editor/desktop tauri",
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
-    "check": "pnpm --filter @my-editor/desktop typecheck && cargo check --workspace --all-targets",
+    "site": "pnpm --filter @my-editor/website dev",
+    "site:build": "pnpm --filter @my-editor/website build",
+    "check": "node scripts/check-version.mjs && pnpm --filter @my-editor/desktop typecheck && pnpm --filter @my-editor/website typecheck && cargo check --workspace --all-targets",
     "test": "cargo test --workspace",
-    "lint": "biome check . && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
+    "lint": "biome check . && cargo fmt --check && cargo clippy --all-targets -- -D warnings",
+    "version:check": "node scripts/check-version.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3"

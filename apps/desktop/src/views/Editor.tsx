@@ -8,6 +8,7 @@ import {
   onMount,
   Show,
   Switch,
+  untrack,
 } from "solid-js";
 import { type DirEntry, describeError, hasBackend } from "../backend";
 import { CodeEditor } from "../components/CodeEditor";
@@ -44,7 +45,7 @@ import {
   pendingEditOf,
   toggleClaudePanel,
 } from "../state/claude";
-import { closeGitDiff, type GitDiffView, git } from "../state/git";
+import { closeGitDiff, type GitDiffView, git, treeChange } from "../state/git";
 import type { Group, Layout, Split } from "../state/groups";
 import {
   isMarkdown,
@@ -87,6 +88,7 @@ import {
   showSidebar,
   state,
   toggleFolder,
+  treeReveals,
   updateSettings,
   WIDTHS,
 } from "../state/store";
@@ -110,6 +112,7 @@ function TreeItem(props: { entry: DirEntry; depth: number }) {
   let row!: HTMLButtonElement;
   // The open file's row scrolls into view, also when its folder has just loaded.
   createEffect(() => {
+    treeReveals();
     if (active()) row.scrollIntoView({ block: "nearest" });
   });
   const session = () => sessionForFile(props.entry.path);
@@ -126,6 +129,8 @@ function TreeItem(props: { entry: DirEntry; depth: number }) {
         classList={{
           active: active(),
           symlink: props.entry.isSymlink,
+          "git-modified": treeChange(props.entry.path) === "modified",
+          "git-added": treeChange(props.entry.path) === "added",
         }}
         title={props.entry.isSymlink ? "Symbolic link" : undefined}
         aria-expanded={props.entry.isDir ? expanded() : undefined}
@@ -212,7 +217,8 @@ export function Explorer(props: { right?: boolean }) {
   // Opening a file, or a diff of one, opens its folders in the tree.
   createEffect(() => {
     const path = shownFile();
-    if (path) revealInTree(path);
+    // Untracked: reading the open folders here would reopen one the user collapses.
+    if (path) untrack(() => revealInTree(path));
   });
   return (
     <aside
@@ -466,6 +472,8 @@ function Tabs(props: { group: Group }) {
                   role="tab"
                   aria-selected={active()}
                   onClick={() => openFile(path)}
+                  onDblClick={() => revealInTree(path, true)}
+                  title="Double-click to show it in the file tree"
                   onPointerDown={(e) => startTabDrag(path, fileName(path), e)}
                 >
                   <Show when={proposed()}>

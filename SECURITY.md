@@ -2,9 +2,11 @@
 
 ## Reporting a vulnerability
 
-TODO: add a private contact for security reports.
+Please don't open a public issue, pull request or discussion for a vulnerability.
 
-Please don't open a public issue for a vulnerability.
+Report it privately through GitHub instead: on the repository's **Security** tab, choose **Report a vulnerability**. Include what you found, how to reproduce it, and what an attacker could do with it. The report stays private between you and the maintainers until a fix is released.
+
+Claudine has a single supported version, the latest release. Fixes go into the next release and are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security invariants
 

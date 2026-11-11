@@ -1890,14 +1890,14 @@ dependencies = [
 
 [[package]]
 name = "my-editor-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cap-std",
 ]
 
 [[package]]
 name = "my-editor-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cap-std",
  "my-editor-core",
@@ -1913,11 +1913,11 @@ dependencies = [
 
 [[package]]
 name = "my-editor-hook"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "my-editor-protocol"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",

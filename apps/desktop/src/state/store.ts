@@ -28,7 +28,7 @@ import type {
   View,
 } from "../types";
 import { resetClaude } from "./claude";
-import { closeGitDiff, refreshGit, resetGit } from "./git";
+import { closeGitDiff, refreshGit, refreshGitStatus, resetGit } from "./git";
 import {
   allGroups,
   findGroup,
@@ -848,7 +848,7 @@ function reloadTree() {
  */
 export function filesChangedOnDisk(paths: string[] | "all") {
   if (!state.project) return;
-  if (state.sidebar === "git") void refreshGit();
+  void (state.sidebar === "git" ? refreshGit() : refreshGitStatus());
   searchCache.clear();
   void loadDir("");
   for (const path of state.expanded) void loadDir(path);
@@ -880,7 +880,14 @@ function projectOpened(project: ProjectInfo) {
   setLayout(newGroup([CHAT_TAB]), "");
   void loadDir("");
   void refreshFileList();
+  void refreshGitStatus();
 }
+
+// Files edited in another app change git's status too.
+if (typeof window !== "undefined")
+  window.addEventListener("focus", () => {
+    if (state.project) void refreshGitStatus();
+  });
 
 /** Picks up a folder Rust already has open, after a reload of the window. */
 export async function loadCurrentProject() {
@@ -966,7 +973,7 @@ export async function saveFile(path: string, overwrite = false) {
     versions.set(path, version);
     setState("files", path, { status: "ready", value: text });
     setSaveProblem(null);
-    if (state.sidebar === "git") void refreshGit();
+    void (state.sidebar === "git" ? refreshGit() : refreshGitStatus());
     // Typing during the save keeps the file unsaved, with its change bar.
     if (currentDoc(path)?.toString() !== text) return;
     setDirty(path, false);
@@ -1107,7 +1114,14 @@ export function toggleFolder(path: string) {
 }
 
 /** Expands every folder above `path`, so its row shows in the tree. Never collapses. */
-export function revealInTree(path: string) {
+const [treeReveals, setTreeReveals] = createSignal(0);
+
+/** Counts explicit reveals, so the file's row scrolls into view again each time. */
+export { treeReveals };
+
+/** Opens the folders above `path` in the tree. Collapsing them later is up to the user. */
+export function revealInTree(path: string, scroll = false) {
+  if (scroll) setTreeReveals((n) => n + 1);
   const parts = path.split("/").slice(0, -1);
   const folders = parts.map((_, i) => parts.slice(0, i + 1).join("/"));
   const missing = folders.filter((f) => !state.expanded.includes(f));

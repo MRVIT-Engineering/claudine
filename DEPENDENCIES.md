@@ -36,6 +36,12 @@ Every direct dependency, with the reason it's here.
 | `typescript` | 7.0.2 | `apps/desktop` (dev) | Type checking with `tsc --noEmit`. |
 | `vite` | 8.3.5 | `apps/desktop` (dev) | Dev server and bundler. |
 | `vite-plugin-solid` | 2.11.14 | `apps/desktop` (dev) | Compiles Solid JSX for Vite. |
+| `next` | 16.4.5 | `apps/website` | The project website, built as a static export: plain HTML, CSS and JS, no server. Not part of the app. Its optional `sharp` has no install script. |
+| `react` | 19.2.9 | `apps/website` | Next.js's UI library. |
+| `react-dom` | 19.2.9 | `apps/website` | Renders React for Next.js. |
+| `@types/react` | 19.2.18 | `apps/website` (dev) | React types. |
+| `@types/react-dom` | 19.2.7 | `apps/website` (dev) | React DOM types. |
+| `typescript` | 7.0.2 | `apps/website` (dev) | Type checking with `tsc --noEmit`, same version as the app. |
 | `@biomejs/biome` | 2.6.3 | root (dev) | Formatting and linting; replaces ESLint + Prettier. |
 
 ## Tools (not linked into the app)

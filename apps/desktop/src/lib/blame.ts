@@ -11,7 +11,7 @@ import {
 } from "@codemirror/view";
 import { type Blame, backend } from "../backend";
 
-const DELAY_MS = 3000;
+const DELAY_MS = 1000;
 
 const showBlame = StateEffect.define<{ line: number; text: string }>();
 

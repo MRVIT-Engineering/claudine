@@ -21,11 +21,6 @@ function Svg(props: { children: JSX.Element; size?: number }) {
 
 type IconProps = { size?: number };
 
-export const LogoIcon = (p: IconProps) => (
-  <Svg size={p.size}>
-    <path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" />
-  </Svg>
-);
 export const ChevronRight = (p: IconProps) => (
   <Svg size={p.size}>
     <path d="m9 6 6 6-6 6" />

@@ -8,9 +8,19 @@ import {
   readImage,
 } from "../lib/images";
 import { modeTone } from "../lib/modes";
+import { accounts } from "../state/accounts";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { ArrowUp, CloseIcon } from "./Icons";
 import { previewImage } from "./ImagePreview";
+
+/** The accounts as picker options, each with its color. */
+export function accountOptions(): DropdownOption<string>[] {
+  return accounts.list.map((account) => ({
+    value: account.id,
+    label: account.label,
+    icon: <span class={`dot acct-dot acct-${account.color}`} />,
+  }));
+}
 
 export interface Picker {
   value: string;

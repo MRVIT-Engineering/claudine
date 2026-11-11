@@ -9,7 +9,7 @@ import {
   Switch,
 } from "solid-js";
 import type { Effort } from "../backend";
-import { ChatInput } from "../components/ChatInput";
+import { accountOptions, ChatInput } from "../components/ChatInput";
 import { AccountBadge, Empty } from "../components/Common";
 import { previewImage } from "../components/ImagePreview";
 import { MarkdownText } from "../components/MarkdownPreview";
@@ -230,11 +230,7 @@ function Composer() {
         title: working()
           ? "Finish or stop this turn to switch accounts."
           : "Switching accounts starts a new conversation.",
-        options: accounts.list.map((account) => ({
-          value: account.id,
-          label: account.label,
-          icon: <span class={`dot acct-dot acct-${account.color}`} />,
-        })),
+        options: accountOptions(),
         onChange: (id) => {
           if (!working()) switchAccount(id);
         },
