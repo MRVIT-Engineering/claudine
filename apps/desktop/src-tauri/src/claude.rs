@@ -9,6 +9,7 @@
 use crate::accounts::{AccountsState, use_account};
 use crate::error::CommandError;
 use crate::images::{PastedImage, user_message};
+use crate::platform;
 use crate::project::ProjectState;
 use crate::proposal::{Proposal, propose};
 use crate::trust::TrustState;
@@ -19,7 +20,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -402,33 +403,15 @@ impl SessionState {
 /// `PATH` comes first, so the app runs the same `claude` as the user's terminal. Apps
 /// started from the Dock get a minimal `PATH`, so the usual install folders follow.
 /// Relative `PATH` entries are skipped: `.` would let a project supply its own `claude`.
+/// On Windows only `claude.exe` counts, the native install; see `platform::exe_name`.
 pub fn find_claude() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(path) = std::env::var_os("PATH") {
-        for folder in std::env::split_paths(&path).filter(|folder| folder.is_absolute()) {
-            candidates.push(folder.join("claude"));
-        }
+    let mut extra: Vec<PathBuf> = Vec::new();
+    if let Some(home) = platform::home_dir() {
+        extra.push(home.join(".local").join("bin"));
+        extra.push(home.join(".claude").join("local"));
     }
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        candidates.push(home.join(".local/bin/claude"));
-        candidates.push(home.join(".claude/local/claude"));
-    }
-    candidates.push(PathBuf::from("/opt/homebrew/bin/claude"));
-    candidates.push(PathBuf::from("/usr/local/bin/claude"));
-    candidates.into_iter().find(|path| is_executable(path))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path)
-        .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    extra.extend(platform::install_folders());
+    platform::find_program("claude", &extra)
 }
 
 /// A failed spawn: `NotFound` means `claude` itself is gone.
@@ -449,7 +432,7 @@ pub fn spawn_session(
     on_event: EventSink,
 ) -> Result<Session, CommandError> {
     // LEARN: `Command` is `child_process.spawn`; `Stdio::piped()` hands us each stream.
-    let mut command = Command::new(claude);
+    let mut command = platform::command(claude);
     command.args([
         "-p",
         "--input-format",
@@ -968,7 +951,12 @@ fn relative(path: &str, root: &Path) -> (String, bool) {
     let climbs = path.components().any(|part| part == Component::ParentDir);
     match path.strip_prefix(root) {
         Ok(inside) if !climbs => {
-            let shown = inside.to_string_lossy().into_owned();
+            // Joined with `/` on Windows too, the way the path guard and the webview expect.
+            let shown = inside
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             let shown = if shown.is_empty() {
                 ".".to_string()
             } else {
@@ -997,7 +985,7 @@ fn shorten(text: String) -> String {
 
 /// Whether this `claude` has auto mode, from the choices its help lists.
 pub fn supports_auto_mode(claude: &Path) -> bool {
-    let Ok(output) = Command::new(claude)
+    let Ok(output) = platform::command(claude)
         .arg("--help")
         .env_remove("CLAUDECODE")
         .stdin(Stdio::null())
@@ -1082,7 +1070,7 @@ pub fn ensure_trusted(
     if !trust.is_trusted(&folder) {
         let message = format!(
             "Claude Code will run in:\n{}\n\nA project can include settings, hooks and MCP \
-             servers (in .claude/ and .mcp.json) that run commands on this Mac as soon as \
+             servers (in .claude/ and .mcp.json) that run commands on this computer as soon as \
              Claude starts. Only trust folders whose contents you trust.",
             folder.display()
         );
@@ -1315,10 +1303,16 @@ pub fn stop_session(window: WebviewWindow, sessions: State<'_, SessionState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
+    use std::process::Command;
 
-    /// A stand-in for `claude`: asks to write a file, then saves the answer it gets.
-    const FAKE_CLAUDE: &str = r#"#!/bin/sh
+    /// Tests that run a shell script as `claude`, so macOS and Linux only.
+    #[cfg(unix)]
+    mod fake_claude {
+        use super::*;
+        use std::time::Instant;
+
+        /// A stand-in for `claude`: asks to write a file, then saves the answer it gets.
+        const FAKE_CLAUDE: &str = r#"#!/bin/sh
 read init
 printf '%s\n' "$init" > init.json
 echo '{"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"'"$PWD"'/a.txt","content":"original"}}}'
@@ -1326,125 +1320,126 @@ read answer
 printf '%s\n' "$answer" > answer.json
 "#;
 
-    /// Runs the fake in a fresh folder. Returns the session, the folder, and the events.
-    fn start_fake(name: &str) -> (Session, PathBuf, Arc<Mutex<Vec<String>>>) {
-        use std::os::unix::fs::PermissionsExt;
-        let folder = std::env::temp_dir().join(format!("claude-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::create_dir_all(&folder).unwrap();
-        let folder = folder.canonicalize().unwrap();
-        let fake = folder.join("fake-claude");
-        std::fs::write(&fake, FAKE_CLAUDE).unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        /// Runs the fake in a fresh folder. Returns the session, the folder, and the events.
+        fn start_fake(name: &str) -> (Session, PathBuf, Arc<Mutex<Vec<String>>>) {
+            use std::os::unix::fs::PermissionsExt;
+            let folder = std::env::temp_dir().join(format!("claude-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            std::fs::create_dir_all(&folder).unwrap();
+            let folder = crate::platform::canonicalize(&folder).unwrap();
+            let fake = folder.join("fake-claude");
+            std::fs::write(&fake, FAKE_CLAUDE).unwrap();
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let recorded = Arc::clone(&events);
-        let sink: EventSink = Arc::new(move |event| {
-            recorded
-                .lock()
-                .unwrap()
-                .push(serde_json::to_string(&event).unwrap());
-        });
-        let options = SpawnOptions::editor();
-        let session = spawn_session(&fake, &folder, "default", None, &options, sink).unwrap();
-        (session, folder, events)
-    }
-
-    fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
-        let start = Instant::now();
-        while !done() {
-            assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "timed out: {what}"
-            );
-            thread::sleep(Duration::from_millis(20));
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&events);
+            let sink: EventSink = Arc::new(move |event| {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::to_string(&event).unwrap());
+            });
+            let options = SpawnOptions::editor();
+            let session = spawn_session(&fake, &folder, "default", None, &options, sink).unwrap();
+            (session, folder, events)
         }
-    }
 
-    fn read_json(path: &Path) -> Value {
-        wait_for("answer file", || {
-            std::fs::read_to_string(path).is_ok_and(|text| text.ends_with('\n'))
-        });
-        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-    }
+        fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+            let start = Instant::now();
+            while !done() {
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "timed out: {what}"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
 
-    #[test]
-    fn allowing_sends_back_the_input_rust_kept() {
-        let (session, folder, events) = start_fake("allow");
-        wait_for("permission event", || {
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|e| e.contains("permission"))
-        });
-        let shown: Value = serde_json::from_str(&events.lock().unwrap()[0]).unwrap();
-        assert_eq!(shown["kind"], "permission");
-        assert_eq!(shown["summary"], "a.txt");
-        assert_eq!(shown["detail"], "original");
-        assert_eq!(shown["outside"], false);
+        fn read_json(path: &Path) -> Value {
+            wait_for("answer file", || {
+                std::fs::read_to_string(path).is_ok_and(|text| text.ends_with('\n'))
+            });
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+        }
 
-        answer(&session.handles, "p1", true).unwrap();
-        // A second answer to the same request is refused.
-        assert_eq!(
-            answer(&session.handles, "p1", false),
-            Err(CommandError::NotFound)
-        );
+        #[test]
+        fn allowing_sends_back_the_input_rust_kept() {
+            let (session, folder, events) = start_fake("allow");
+            wait_for("permission event", || {
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e.contains("permission"))
+            });
+            let shown: Value = serde_json::from_str(&events.lock().unwrap()[0]).unwrap();
+            assert_eq!(shown["kind"], "permission");
+            assert_eq!(shown["summary"], "a.txt");
+            assert_eq!(shown["detail"], "original");
+            assert_eq!(shown["outside"], false);
 
-        let sent = read_json(&folder.join("answer.json"));
-        assert_eq!(sent["response"]["request_id"], "p1");
-        assert_eq!(sent["response"]["response"]["behavior"], "allow");
-        assert_eq!(
-            sent["response"]["response"]["updatedInput"]["content"],
-            "original"
-        );
-        let init = read_json(&folder.join("init.json"));
-        assert_eq!(init["request"]["subtype"], "initialize");
+            answer(&session.handles, "p1", true).unwrap();
+            // A second answer to the same request is refused.
+            assert_eq!(
+                answer(&session.handles, "p1", false),
+                Err(CommandError::NotFound)
+            );
 
-        wait_for("exit event", || {
-            events.lock().unwrap().iter().any(|e| e.contains("exited"))
-        });
-    }
+            let sent = read_json(&folder.join("answer.json"));
+            assert_eq!(sent["response"]["request_id"], "p1");
+            assert_eq!(sent["response"]["response"]["behavior"], "allow");
+            assert_eq!(
+                sent["response"]["response"]["updatedInput"]["content"],
+                "original"
+            );
+            let init = read_json(&folder.join("init.json"));
+            assert_eq!(init["request"]["subtype"], "initialize");
 
-    #[test]
-    fn denying_sends_a_deny_and_unknown_ids_are_refused() {
-        let (session, folder, events) = start_fake("deny");
-        wait_for("permission event", || {
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|e| e.contains("permission"))
-        });
-        assert_eq!(
-            answer(&session.handles, "made-up", true),
-            Err(CommandError::NotFound)
-        );
-        answer(&session.handles, "p1", false).unwrap();
+            wait_for("exit event", || {
+                events.lock().unwrap().iter().any(|e| e.contains("exited"))
+            });
+        }
 
-        let sent = read_json(&folder.join("answer.json"));
-        assert_eq!(sent["response"]["response"]["behavior"], "deny");
-        assert_eq!(sent["response"]["response"]["message"], DECLINED);
-        assert!(sent["response"]["response"]["updatedInput"].is_null());
-    }
+        #[test]
+        fn denying_sends_a_deny_and_unknown_ids_are_refused() {
+            let (session, folder, events) = start_fake("deny");
+            wait_for("permission event", || {
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e.contains("permission"))
+            });
+            assert_eq!(
+                answer(&session.handles, "made-up", true),
+                Err(CommandError::NotFound)
+            );
+            answer(&session.handles, "p1", false).unwrap();
 
-    #[test]
-    fn dropping_a_session_stops_its_process() {
-        let (session, _folder, events) = start_fake("drop");
-        wait_for("permission event", || {
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|e| e.contains("permission"))
-        });
-        let stdin = Arc::clone(&session.handles.stdin);
-        drop(session);
-        wait_for("exit event", || {
-            events.lock().unwrap().iter().any(|e| e.contains("exited"))
-        });
-        let write = write_line(&stdin, &json!({}));
-        assert_eq!(write, Err(CommandError::NoSession));
+            let sent = read_json(&folder.join("answer.json"));
+            assert_eq!(sent["response"]["response"]["behavior"], "deny");
+            assert_eq!(sent["response"]["response"]["message"], DECLINED);
+            assert!(sent["response"]["response"]["updatedInput"].is_null());
+        }
+
+        #[test]
+        fn dropping_a_session_stops_its_process() {
+            let (session, _folder, events) = start_fake("drop");
+            wait_for("permission event", || {
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e.contains("permission"))
+            });
+            let stdin = Arc::clone(&session.handles.stdin);
+            drop(session);
+            wait_for("exit event", || {
+                events.lock().unwrap().iter().any(|e| e.contains("exited"))
+            });
+            let write = write_line(&stdin, &json!({}));
+            assert_eq!(write, Err(CommandError::NoSession));
+        }
     }
 
     fn root() -> PathBuf {
@@ -1569,7 +1564,12 @@ printf '%s\n' "$answer" > answer.json
     /// A relay for messages that don't need a running `claude`. Its stdin is `cat`'s;
     /// the caller ends `cat` with `finish`.
     fn test_relay() -> (Relay, Child) {
-        let mut child = Command::new("/bin/cat")
+        // Any program that reads stdin until it closes.
+        #[cfg(unix)]
+        let program = PathBuf::from("/bin/cat");
+        #[cfg(windows)]
+        let program = crate::platform::cmd_exe().with_file_name("sort.exe");
+        let mut child = Command::new(program)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()

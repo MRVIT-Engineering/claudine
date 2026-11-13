@@ -4,6 +4,14 @@ Every release of Claudine, newest first. Versions follow [Semantic Versioning](h
 
 ## Unreleased
 
+### Added
+
+- Windows support: build from source, with Windows in CI. Claudine runs the native Claude Code install (`claude.exe`).
+
+### Security
+
+- On Windows, the path guard refuses names Windows reads differently (`.git.`, `.git::$INDEX_ALLOCATION`, `NUL`) and never writes through an 8.3 short name such as `GIT~1`. Junctions are treated like symlinks.
+
 ## 1.0.0 - 2026-11-11
 
 The first versioned release.

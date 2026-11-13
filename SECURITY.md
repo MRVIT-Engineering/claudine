@@ -46,7 +46,7 @@ Claudine has a single supported version, the latest release. Fixes go into the n
 
 ## Claude accounts
 
-- Each added account is its own Claude Code config folder, `accounts/<id>` in the app data folder, created with `0700` permissions. `claude` runs with `CLAUDE_CONFIG_DIR` set to it. On macOS the login is a Keychain entry that `claude` names after that folder.
+- Each added account is its own Claude Code config folder, `accounts/<id>` in the app data folder, created with `0700` permissions (on Windows, see below). `claude` runs with `CLAUDE_CONFIG_DIR` set to it. On macOS the login is a Keychain entry that `claude` names after that folder.
 - Claudine never reads, stores or sends a token or password. Sign-in, status and sign-out are `claude auth login`, `claude auth status` and `claude auth logout`, run by Rust. `accounts.json` keeps only ids, labels and colors. The email and plan shown are read fresh from `claude auth status`.
 - The webview only sends account ids. Rust looks each id up in its own list, and ids are lowercase letters, digits and `-`, so the webview can't name a folder. Labels and colors are checked; a broken or hand-edited file is cleaned when loaded.
 - For an added account, Rust removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` from `claude`'s environment, so a shared key can't stand in for the account's own login. The default account uses `~/.claude` and keeps the environment as is.
@@ -64,7 +64,7 @@ A run is `claude` working on its own on a new branch, in a git worktree under th
 - **Permissions.** Runs use `--permission-mode auto` when the installed `claude` lists it, `acceptEdits` plus a short allowlist of build, test and read-only git commands when it doesn't, or `acceptEdits` or `default` when the user picks them. Whatever the mode, Rust passes `ask` rules with `--settings` for `git push`, package installs (npm, pnpm, yarn, bun, pip, uv, cargo, brew, gem, go get), `rm`, `curl`, `wget`, `WebFetch`, `WebSearch` and every command on the user's deny list. These come to Claudine as approval cards, answered the same way as in the Editor chat. Verified with Claude Code 2.1.309: an `ask` rule still asks in auto mode.
 - **No account switching.** A run stays on the account it started on. A usage limit pauses it and says so; nothing moves it to another account. Signing an account out or removing it stops its runs.
 - **Pushing and pull requests.** Nothing is committed, pushed or opened without the user's approval in the review. Approving shows a native dialog from Rust that names the branch and the target. Only then does Rust commit in the worktree, run `git push --set-upstream origin <branch>` and `gh pr create`, with the user's own git and `gh` credentials. Prompts are disabled, so neither can wait for input. A compromised webview can call the command, but can't answer the dialog.
-- **Check commands.** Detected checks (`cargo test`, the project's test script, `pytest`) run as they are, like any command Claude runs in the worktree. Commands typed in Settings could be anything the webview set, so each list runs only after the user confirms it once in a native dialog; the confirmed lists are kept in `runs/approved-checks.json`. Checks run with `sh -c` in the worktree and are killed after 15 minutes.
+- **Check commands.** Detected checks (`cargo test`, the project's test script, `pytest`) run as they are, like any command Claude runs in the worktree. Commands typed in Settings could be anything the webview set, so each list runs only after the user confirms it once in a native dialog; the confirmed lists are kept in `runs/approved-checks.json`. Checks run with `sh -c` (`cmd.exe /D /S /C` on Windows) in the worktree and are killed after 15 minutes.
 - **What's stored.** `runs/runs.json` in the app data folder keeps each run's record, including real paths, which never go to the webview. `runs/<id>/events.jsonl` keeps the conversation as Claudine's own summarized events. Nothing from an account's config folder is read or stored.
 - **What the webview sends.** Run ids, the task, a base branch name (checked against the repository's branches), comments and choices. Never a path, a command or a CLI argument.
 - **Limits:**
@@ -88,7 +88,24 @@ The path guard (`crates/core/src/path_guard.rs`) keeps file access inside the op
 - **Source files can still run code.** Compromised JavaScript could write a malicious `build.rs` inside the project, because editing source is the app's job. The webview's hardening is the defense there.
 - **A symlink swapped in after `write_path` runs** can redirect a write to `.git`. It can't leave the project.
 - **Hard links** look like normal files. Creating one to an outside file needs a process that can already reach that file.
-- **Windows isn't reviewed.** The attack tests only run on macOS and Linux.
+- **Symlink attack tests run on macOS and Linux.** Creating a symlink on Windows needs Developer Mode, so on Windows the same attacks are tested with junctions, which any user can create.
+
+## Windows
+
+Windows reads some names differently from how they're written, which could get a path past the guard's name checks. On Windows the guard also:
+
+- **Refuses names Windows rewrites or reads as something else:** a trailing `.` or space (`.git.` opens `.git`), a `:` (`.git::$INDEX_ALLOCATION` is the `.git` folder itself, `a.txt:x` is a hidden stream, `C:x` is a drive), the characters `<>"|?*` and control characters, and device names such as `NUL`, `CON` or `COM1.txt`. These are the same tricks behind git's CVE-2014-9390 and CVE-2019-1353.
+- **Never writes through an 8.3 short name**, such as `GIT~1` for `.git`, because Claudine can't tell which folder one opens. Reading is allowed, as it is for `.git` itself.
+- **Treats a junction like a symlink:** `write_path` refuses to write through one, and `cap-std` keeps reads and writes through one inside the project. Tests in `junction_attacks` cover both, and a junction to `.git` inside the project.
+
+Elsewhere on Windows:
+
+- **Only `claude.exe`, `git.exe` and `gh.exe` run**, found in absolute `PATH` entries and then in the usual install folders. Never a `.cmd` or `.bat` file: those run through `cmd.exe`, which would read `&`, `|` and `%` in arguments (a task, a commit message, a PR title) as commands.
+- **Check commands run with `cmd.exe /D /S /C`** from the Windows system folder, never from `PATH` or `COMSPEC`. `/D` skips AutoRun commands from the registry.
+- **Processes start without a console window** (`CREATE_NO_WINDOW`), so nothing flashes on screen. This changes nothing else about them.
+- **Canonical paths drop the `\\?\` prefix** only when that can't change which file the path names: a drive path under 260 characters whose names all pass the checks above. Otherwise the prefix stays.
+- **Account folders aren't `0700`.** They're created under `%APPDATA%`, which is already private to the user, and inherit its permissions.
+- **A check that times out** is killed, but programs it started can keep running. The same is true on macOS and Linux.
 
 ## Accepted risks
 

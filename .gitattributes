@@ -1,0 +1,2 @@
+# LF everywhere, so Windows checkouts match what rustfmt, Biome and the Tauri build write.
+* text=auto eol=lf

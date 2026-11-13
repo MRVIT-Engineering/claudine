@@ -342,7 +342,7 @@ impl AccountsState {
     ) -> Result<Output, CommandError> {
         create_private_dir(&self.folders)?;
         self.check_auth_command(claude)?;
-        let mut command = Command::new(claude);
+        let mut command = crate::platform::command(claude);
         command
             .arg("auth")
             .args(args)
@@ -355,7 +355,7 @@ impl AccountsState {
     /// Versions without `claude auth` (2.1.17 has none) read `auth status` as a prompt
     /// and start a whole session. `--help` never does, so ask it first.
     fn check_auth_command(&self, claude: &Path) -> Result<(), CommandError> {
-        let mut command = Command::new(claude);
+        let mut command = crate::platform::command(claude);
         command
             .args(["auth", "--help"])
             .current_dir(&self.folders)
@@ -528,7 +528,7 @@ pub fn sign_in(
     create_private_dir(&accounts.folders)?;
     accounts.check_auth_command(&claude)?;
 
-    let mut command = Command::new(&claude);
+    let mut command = crate::platform::command(&claude);
     command.args(["auth", "login"]);
     if console {
         command.arg("--console");
@@ -712,14 +712,18 @@ mod tests {
 
     #[test]
     fn accounts_are_saved_with_a_private_folder_each() {
-        use std::os::unix::fs::PermissionsExt;
         let (state, dir) = temp_state("saved");
         let work = state.add("Work", "pink").unwrap();
         assert_eq!(work.id, "work");
         let folder = state.config_dir("work").unwrap().unwrap();
-        assert_eq!(folder, dir.join("accounts/work"));
-        let mode = fs::metadata(&folder).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
+        assert_eq!(folder, dir.join("accounts").join("work"));
+        // On Windows the folder inherits the user-only access of the app's data folder.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&folder).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
 
         state.update("work", "Job", "green").unwrap();
         state.set_last_used("work");
@@ -759,18 +763,33 @@ mod tests {
         assert_eq!(state.add("Work", "blue").unwrap().id, "work-2");
     }
 
+    /// `CLAUDE_CONFIG_DIR|ANTHROPIC_API_KEY` as a child process sees them.
     fn env_seen(config_dir: Option<&Path>) -> String {
-        let mut command = Command::new("/bin/sh");
-        command.args([
-            "-c",
-            r#"printf '%s|%s' "$CLAUDE_CONFIG_DIR" "$ANTHROPIC_API_KEY""#,
-        ]);
+        #[cfg(unix)]
+        let mut command = Command::new("/usr/bin/env");
+        #[cfg(windows)]
+        let mut command = Command::new(crate::platform::cmd_exe());
+        #[cfg(windows)]
+        command.args(["/D", "/C", "set"]);
         // As if the app had inherited both from the shell that started it.
         command
             .env("CLAUDE_CONFIG_DIR", "/elsewhere")
             .env("ANTHROPIC_API_KEY", "sk-shared");
         use_account(&mut command, config_dir);
-        String::from_utf8(command.output().unwrap().stdout).unwrap()
+        let listed = String::from_utf8(command.output().unwrap().stdout).unwrap();
+        let value = |key: &str| {
+            let prefix = format!("{key}=");
+            listed
+                .lines()
+                .find_map(|line| line.strip_prefix(&prefix))
+                .unwrap_or_default()
+                .to_string()
+        };
+        format!(
+            "{}|{}",
+            value("CLAUDE_CONFIG_DIR"),
+            value("ANTHROPIC_API_KEY")
+        )
     }
 
     #[test]

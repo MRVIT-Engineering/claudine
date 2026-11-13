@@ -122,6 +122,8 @@ mod tests {
         );
 
         assert_eq!(propose("Edit", &edit, "../a.txt", &root), None);
+        // Windows can't delete a folder while the project still holds it open.
+        drop(root);
         fs::remove_dir_all(dir).unwrap();
     }
 }

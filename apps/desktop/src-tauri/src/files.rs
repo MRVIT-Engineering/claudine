@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -52,8 +52,8 @@ pub fn list_dir(
         None => (root.dir().entries()?, String::new()),
         Some(raw) => {
             let checked = root.read_path(raw)?;
-            // Paths from the webview are text, so a checked path is always valid UTF-8.
-            let parent = checked.as_path().to_string_lossy().into_owned();
+            // Children are named `parent/name`, with `/` on Windows too.
+            let parent = checked.to_slash_string();
             (root.dir().read_dir(checked.as_path())?, parent)
         }
     };
@@ -119,7 +119,17 @@ pub fn read_file(root: &ProjectRoot, raw: &str) -> Result<FileText, CommandError
 
 /// A file's bytes, up to [`MAX_FILE_BYTES`]. `path` must come from the guard.
 fn read_bytes(root: &ProjectRoot, path: &std::path::Path) -> Result<Vec<u8>, CommandError> {
-    let file = root.dir().open(path)?;
+    let file = match root.dir().open(path) {
+        Ok(file) => file,
+        // Windows refuses to open a folder as a file, where Unix opens it.
+        Err(error)
+            if error.kind() == io::ErrorKind::PermissionDenied
+                && root.dir().metadata(path).is_ok_and(|meta| meta.is_dir()) =>
+        {
+            return Err(CommandError::IsADirectory);
+        }
+        Err(error) => return Err(error.into()),
+    };
     if file.metadata()?.is_dir() {
         return Err(CommandError::IsADirectory);
     }
@@ -513,6 +523,7 @@ mod tests {
         assert_eq!(on_disk(&project, "a.txt"), "mine");
     }
 
+    #[cfg(unix)]
     #[test]
     fn saving_keeps_permissions() {
         use std::os::unix::fs::PermissionsExt;
@@ -530,6 +541,8 @@ mod tests {
         let project = TestProject::new();
         project.write(".git/config", b"[core]");
         project.write("real.txt", b"real");
+        // Creating a symlink on Windows needs Developer Mode, so that case is Unix only.
+        #[cfg(unix)]
         std::os::unix::fs::symlink(
             project.base.join("project/real.txt"),
             project.base.join("project/link.txt"),
@@ -544,6 +557,7 @@ mod tests {
             save_file(&root, ".git/config", "x", None),
             Err(CommandError::Protected)
         );
+        #[cfg(unix)]
         assert_eq!(
             save_file(&root, "link.txt", "x", None),
             Err(CommandError::ThroughSymlink)

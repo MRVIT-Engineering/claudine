@@ -5,6 +5,7 @@
 //! creates the run's branch and folder without touching the checked-out files.
 
 use crate::error::CommandError;
+use crate::platform;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -23,16 +24,7 @@ const MAX_SLUG: usize = 28;
 /// Finds an executable by name on `PATH`, then in the usual install folders.
 /// Relative `PATH` entries are skipped, so a project can't supply its own `git`.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(path) = std::env::var_os("PATH") {
-        for folder in std::env::split_paths(&path).filter(|folder| folder.is_absolute()) {
-            candidates.push(folder.join(name));
-        }
-    }
-    for folder in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        candidates.push(Path::new(folder).join(name));
-    }
-    candidates.into_iter().find(|path| path.is_file())
+    platform::find_program(name, &platform::install_folders())
 }
 
 /// A git error, with the user's home folder shortened to `~`.
@@ -43,7 +35,7 @@ fn git_error(output: &Output) -> CommandError {
         .rfind(|line| !line.trim().is_empty())
         .unwrap_or("git failed")
         .to_string();
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = platform::home_dir() {
         let home = home.to_string_lossy().into_owned();
         if !home.is_empty() {
             detail = detail.replace(&home, "~");
@@ -65,7 +57,7 @@ impl Git {
     }
 
     fn command(&self, dir: &Path, args: &[&str]) -> Command {
-        let mut command = Command::new(&self.bin);
+        let mut command = platform::command(&self.bin);
         command
             .current_dir(dir)
             // Paths with non-ASCII characters stay readable instead of octal escapes.
@@ -413,7 +405,7 @@ pub fn find_gh() -> Option<PathBuf> {
 
 /// Whether `gh` is signed in to GitHub.
 pub fn gh_signed_in(gh: &Path) -> bool {
-    Command::new(gh)
+    platform::command(gh)
         .args(["auth", "status"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -432,7 +424,7 @@ pub fn gh_pr_create(
     body: &str,
 ) -> Result<String, CommandError> {
     use std::io::Write;
-    let mut child = Command::new(gh)
+    let mut child = platform::command(gh)
         .current_dir(dir)
         .args([
             "pr",
@@ -765,7 +757,7 @@ pub mod tests {
                 .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
-        let dir = dir.canonicalize().unwrap();
+        let dir = crate::platform::canonicalize(&dir).unwrap();
         git.run(&dir, &["init", "-q", "-b", "main"]).unwrap();
         git.run(&dir, &["config", "user.name", "Test"]).unwrap();
         git.run(&dir, &["config", "user.email", "test@example.com"])
