@@ -8,6 +8,7 @@ mod files;
 mod git;
 mod history;
 mod images;
+mod platform;
 mod project;
 mod proposal;
 mod recent;
@@ -53,7 +54,7 @@ fn open_from_os(app: &AppHandle, urls: &[tauri::Url]) {
         let Ok(path) = url.to_file_path() else {
             continue;
         };
-        let Ok(path) = path.canonicalize() else {
+        let Ok(path) = platform::canonicalize(&path) else {
             continue;
         };
         if !path.is_dir() {

@@ -50,6 +50,7 @@ impl ProjectState {
     }
 
     /// The window that has `path` open, if any.
+    #[cfg(target_os = "macos")]
     pub fn window_with(&self, path: &Path) -> Option<String> {
         let open = self.0.lock().ok()?;
         open.iter()
@@ -58,6 +59,7 @@ impl ProjectState {
     }
 
     /// Whether `window` has a folder open.
+    #[cfg(target_os = "macos")]
     pub fn has_project(&self, window: &str) -> bool {
         self.0.lock().is_ok_and(|open| open.contains_key(window))
     }
@@ -121,7 +123,7 @@ pub fn open_project(
     };
 
     // Resolves symlinks and `..`, so the trust list has one spelling per folder.
-    let path = path.canonicalize()?;
+    let path = crate::platform::canonicalize(path)?;
     let opened = state.open_folder(&window, &path, folder_name(&path), &sessions)?;
     crate::recent::note(&app, &path);
     Ok(Some(opened))
@@ -144,7 +146,7 @@ impl ProjectState {
         name: String,
         sessions: &SessionState,
     ) -> Result<ProjectInfo, CommandError> {
-        let path = path.canonicalize()?;
+        let path = crate::platform::canonicalize(path)?;
         let root = ProjectRoot::open(&path)?;
         let project = Project { root, name, path };
         let opened = info(&project);

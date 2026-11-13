@@ -12,11 +12,13 @@ use std::path::{Component, Path, PathBuf};
 /// `Display` never includes a path, so these messages are safe to show in the webview.
 #[derive(Debug, PartialEq)]
 pub enum GuardError {
-    /// The path is empty, or contains a NUL or a backslash.
+    /// The path is empty, or contains a NUL or a backslash. On Windows, also a name that
+    /// Windows would read as a different file or a device (see `is_windows_safe_name`).
     InvalidPath,
     /// The path is absolute or uses `..`.
     OutsideProject,
-    /// Writing here could run code, so it's never allowed: `.git`.
+    /// Writing here could run code, so it's never allowed: `.git`, and on Windows any 8.3
+    /// short name such as `GIT~1`.
     Protected,
     /// Writing here could run code, so it needs a native confirmation: `.claude`, `.mcp.json`.
     NeedsConfirmation,
@@ -63,6 +65,11 @@ impl RelPath {
         let mut clean = PathBuf::new();
         for component in Path::new(raw).components() {
             match component {
+                // LEARN: `cfg!` is a `true`/`false` constant, so this compiles and is checked on
+                // every OS, unlike `#[cfg]`, which removes the code elsewhere.
+                Component::Normal(name) if cfg!(windows) && !is_windows_safe_name(name) => {
+                    return Err(GuardError::InvalidPath);
+                }
                 Component::Normal(name) => clean.push(name),
                 // `components()` already drops most `.` segments and trailing slashes.
                 Component::CurDir => {}
@@ -83,6 +90,62 @@ impl RelPath {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
+
+    /// The path as the webview writes it: names joined by `/`, on Windows too.
+    pub fn to_slash_string(&self) -> String {
+        self.0
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+}
+
+/// Whether Windows opens exactly the file this name spells. Win32 drops a trailing `.` or
+/// space, so `.git.` opens `.git`; a `:` names a stream, so `.git::$INDEX_ALLOCATION` is the
+/// folder itself; and `NUL` or `com1.txt` open a device. Paths with these never get through.
+pub fn is_windows_safe_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    if name.ends_with('.') || name.ends_with(' ') {
+        return false;
+    }
+    let forbidden = |character: char| {
+        character < ' ' || matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+    };
+    if name.chars().any(forbidden) {
+        return false;
+    }
+    // A device name stays a device with any extension, and with spaces before it.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ');
+    let stem = stem.to_ascii_uppercase();
+    let is_numbered_device = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            matches!(
+                rest,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    };
+    let is_device = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || is_numbered_device("COM")
+        || is_numbered_device("LPT");
+    !is_device
+}
+
+/// Whether a name looks like an 8.3 short name, like `GIT~1` for `.git`. On Windows such a
+/// name can open a protected folder under a name the checks don't know.
+fn looks_like_short_name(name: &str) -> bool {
+    name.split('~')
+        .skip(1)
+        .any(|after| after.starts_with(|character: char| character.is_ascii_digit()))
 }
 
 /// The open project: a handle to its folder, not just its path.
@@ -156,6 +219,10 @@ fn check_not_protected(path: &Path) -> Result<(), GuardError> {
     if names.iter().any(|name| name == ".git") {
         return Err(GuardError::Protected);
     }
+    // Refused outright, because Claudine can't tell which folder a short name opens.
+    if cfg!(windows) && names.iter().any(|name| looks_like_short_name(name)) {
+        return Err(GuardError::Protected);
+    }
     if names
         .iter()
         .any(|name| name == ".claude" || name == ".mcp.json")
@@ -215,6 +282,7 @@ mod tests {
             self.base.join("project")
         }
 
+        #[cfg(unix)]
         fn secret(&self) -> PathBuf {
             self.base.join("secret/key")
         }
@@ -277,6 +345,105 @@ mod tests {
         for raw in ["", ".", "./", "a\0b", "..\\secret", "C:\\Windows"] {
             assert_eq!(parsed(raw), Err(GuardError::InvalidPath), "{raw:?}");
         }
+    }
+
+    // These run on every OS: the rule is plain text matching.
+    #[test]
+    fn windows_safe_names_are_ordinary_names() {
+        for name in [
+            "main.rs",
+            ".git",
+            ".gitignore",
+            "console.log",
+            "auxiliary.c",
+            "com10.txt",
+            "lpt0",
+            "a b.txt",
+            "日本.md",
+        ] {
+            assert!(is_windows_safe_name(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn names_windows_reads_differently_are_unsafe() {
+        for name in [
+            ".git.",
+            ".git ",
+            ".git...",
+            ".git::$INDEX_ALLOCATION",
+            "a.txt:hidden",
+            "C:",
+            "NUL",
+            "nul.txt",
+            "Con",
+            "aux.c",
+            "COM1",
+            "lpt9.log",
+            "COM\u{b9}",
+            "CONIN$",
+            "NUL .txt",
+            "what?",
+            "a*b",
+            "a<b",
+            "a|b",
+            "tab\tname",
+        ] {
+            assert!(!is_windows_safe_name(OsStr::new(name)), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn short_names_are_recognized() {
+        for name in ["GIT~1", "git~1", "CLAUDE~1", "MCP~1.JSO", "GI7A3F~1"] {
+            assert!(looks_like_short_name(name), "{name}");
+        }
+        for name in ["~", "backup~", "notes~old.md", ".git"] {
+            assert!(!looks_like_short_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn slash_strings_use_forward_slashes() {
+        let path = RelPath::parse("src/session/pool.rs").unwrap();
+        assert_eq!(path.to_slash_string(), "src/session/pool.rs");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_rejects_names_that_alias_another_file() {
+        for raw in [
+            ".git./config",
+            ".git /hooks/pre-commit",
+            ".git::$INDEX_ALLOCATION/hooks/pre-commit",
+            "src/NUL",
+            "con.txt",
+            "C:secret",
+            "C:/Windows",
+            "src/a.rs:stream",
+        ] {
+            let result = parsed(raw);
+            assert!(
+                result == Err(GuardError::InvalidPath) || result == Err(GuardError::OutsideProject),
+                "{raw:?}: {result:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_never_writes_through_a_short_name() {
+        let folders = TestFolders::new();
+        let project = folders.open();
+        for raw in [
+            "GIT~1/hooks/pre-commit",
+            "CLAUDE~1/settings.json",
+            "sub/MCP~1.JSO",
+        ] {
+            assert_eq!(project.write_path(raw), Err(GuardError::Protected), "{raw}");
+        }
+        // Reading through one is fine: reads of `.git` are allowed anyway.
+        assert!(project.read_path("GIT~1/config").is_ok());
     }
 
     #[test]
@@ -584,6 +751,74 @@ mod tests {
             assert!(
                 inside > 0 && denied > 0,
                 "the swap never raced: {inside}, {denied}"
+            );
+        }
+    }
+
+    // A junction is Windows' folder link. Unlike a symlink, any user can create one, so
+    // anything writing in the project, including `claude`, can plant one.
+    #[cfg(windows)]
+    mod junction_attacks {
+        use super::*;
+        use std::process::{Command, Stdio};
+
+        /// Makes `link` a junction to `target` with `mklink /J`, which needs no privileges.
+        fn junction(link: &Path, target: &Path) {
+            let system_root = std::env::var_os("SystemRoot").unwrap();
+            let cmd = Path::new(&system_root).join("System32").join("cmd.exe");
+            let status = Command::new(cmd)
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "mklink /J failed");
+        }
+
+        #[test]
+        fn cannot_read_through_a_junction_pointing_outside() {
+            let folders = TestFolders::new();
+            junction(
+                &folders.project().join("link"),
+                &folders.base.join("secret"),
+            );
+            let project = folders.open();
+            let path = project.read_path("link/key").unwrap();
+            let result = project.dir().read_to_string(path.as_path());
+            assert!(result.is_err(), "read the secret through a junction");
+        }
+
+        #[test]
+        fn cannot_write_through_a_junction_pointing_outside() {
+            let folders = TestFolders::new();
+            junction(
+                &folders.project().join("link"),
+                &folders.base.join("secret"),
+            );
+            let project = folders.open();
+            assert_eq!(
+                project.write_path("link/new.txt"),
+                Err(GuardError::ThroughSymlink)
+            );
+            // Even without the check, the handle keeps the write inside the project.
+            let written = project.dir().write("link/new.txt", "planted");
+            assert!(written.is_err(), "wrote through a junction");
+            assert!(!folders.base.join("secret/new.txt").exists());
+        }
+
+        #[test]
+        fn cannot_write_into_git_through_a_junction_inside_the_project() {
+            let folders = TestFolders::new();
+            fs::create_dir_all(folders.project().join(".git/hooks")).unwrap();
+            junction(
+                &folders.project().join("gitlink"),
+                &folders.project().join(".git"),
+            );
+            let project = folders.open();
+            assert_eq!(
+                project.write_path("gitlink/hooks/pre-commit"),
+                Err(GuardError::ThroughSymlink)
             );
         }
     }

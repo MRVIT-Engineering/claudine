@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -1372,10 +1372,9 @@ fn detect_checks(workdir: &Path) -> Vec<String> {
     checks
 }
 
-/// Runs one check with `sh -c`, killing it after the timeout.
+/// Runs one check with `sh -c` (`cmd /C` on Windows), killing it after the timeout.
 fn run_check(workdir: &Path, command: &str) -> CheckResult {
-    let spawned = Command::new("/bin/sh")
-        .args(["-c", &format!("{command} 2>&1")])
+    let spawned = crate::platform::shell(command)
         .current_dir(workdir)
         .env_remove("CLAUDECODE")
         .env("CI", "1")
@@ -1415,7 +1414,8 @@ fn run_check(workdir: &Path, command: &str) -> CheckResult {
         let _ = reader.join();
     }
     let text = tail.lock().map(|t| t.clone()).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().collect();
+    // Trailing spaces trimmed, because `cmd` keeps the one in `echo hello && exit 3`.
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
     let start = lines.len().saturating_sub(CHECK_TAIL_LINES);
     CheckResult {
         command: command.to_string(),
@@ -1690,7 +1690,7 @@ fn create_run(
         fs::create_dir_all(&inner.worktrees)?;
         let path = inner.worktrees.join(&id);
         git.add_worktree(&repo, &path, &branch, &base_commit)?;
-        path.canonicalize()?
+        crate::platform::canonicalize(&path)?
     } else {
         let store = inner.store.lock().map_err(|_| CommandError::Internal)?;
         let busy = store
@@ -2365,9 +2365,7 @@ fn discard(inner: &Inner, run: &RunRecord) -> Result<(), CommandError> {
     if run.has_worktree && run.state != RunState::Approved {
         let git = Git::find()?;
         // Only ever the run's own worktree folder, inside Claudine's data folder.
-        let worktrees = inner
-            .worktrees
-            .canonicalize()
+        let worktrees = crate::platform::canonicalize(&inner.worktrees)
             .unwrap_or_else(|_| inner.worktrees.clone());
         if run.workdir.starts_with(&worktrees) {
             git.remove_worktree(&run.repo, &run.workdir)?;
@@ -2616,6 +2614,8 @@ mod tests {
         let _ = fs::remove_dir_all(&repo);
     }
 
+    /// A shell script, so this test runs on macOS and Linux only.
+    #[cfg(unix)]
     /// A stand-in for `claude`. It counts the messages it gets in a file next to itself,
     /// so a resumed run carries on: 1 writes a file, 2 and 4 explain, 3 changes the file.
     const FAKE_CLAUDE: &str = r#"#!/bin/sh
@@ -2642,6 +2642,7 @@ while IFS= read -r line; do
 done
 "#;
 
+    #[cfg(unix)]
     fn wait_until(what: &str, inner: &Inner, id: &str, done: impl Fn(&RunRecord) -> bool) {
         let start = std::time::Instant::now();
         loop {
@@ -2659,6 +2660,7 @@ done
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_run_goes_from_task_to_review_and_through_a_revision() {
         use std::os::unix::fs::PermissionsExt;

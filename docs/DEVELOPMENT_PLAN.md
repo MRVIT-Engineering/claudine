@@ -229,7 +229,7 @@ Defaults are what the plan assumes unless you say otherwise.
 - **D2:** Use `cap-std`. In a test, it leaked 0 of 200,000 racing reads, while a plain check-then-read guard leaked 615.
 - **D4:** Chat panel, with `claude`'s stream-json output. Permission requests go to Rust through `--permission-prompt-tool stdio`; the hook and socket come later as a second, fail-closed layer.
 - **D6:** Ask once per folder before running `claude` there, and remember the answer in Rust.
-- **D5:** macOS and Linux first. The attack tests only run on Unix, so Windows needs its own review before it's supported.
+- **D5:** macOS and Linux first, then Windows (2026-11-13), after its own review: Windows-only name rules in the path guard, junction attack tests, and a Windows CI job. See SECURITY.md.
 
 ## New dependencies this plan asks for
 

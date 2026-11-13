@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/MRVIT-Engineering/claudine/actions/workflows/ci.yml"><img src="https://github.com/MRVIT-Engineering/claudine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/version-1.0.0-c07afd" alt="Version 1.0.0">
-  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-555" alt="macOS and Linux">
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" alt="macOS, Linux and Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-555" alt="MIT license"></a>
 </p>
 
@@ -20,7 +20,7 @@
 
 Claudine is a small, native code editor built around your own [Claude Code](https://docs.anthropic.com/en/docs/claude-code) install. Pair with Claude in a chat tab where every edit and command waits for your approval, or hand off several tasks at once and review each one like a pull request. The rules that keep you safe live in the Rust backend, where the UI can't reach them.
 
-> **Status:** version 1.0.0. There are no installers yet: signed macOS builds are waiting on an Apple Developer account, so for now you [build it from source](#build-from-source). macOS and Linux only.
+> **Status:** version 1.0.0. There are no installers yet: signed macOS builds are waiting on an Apple Developer account, so for now you [build it from source](#build-from-source) on macOS, Linux or Windows.
 
 ## Features
 
@@ -70,7 +70,7 @@ Claudine is a small, native code editor built around your own [Claude Code](http
 | ⇧⌘V | Toggle Markdown preview |
 | ⌘+ / ⌘- / ⌘0 | Font size |
 
-On Linux, use Ctrl in place of ⌘.
+On Linux and Windows, use Ctrl in place of ⌘.
 
 ## Security
 
@@ -96,7 +96,8 @@ Still to come: a tripwire for sensitive files such as SSH keys, an audit log of 
 - **Rust**, through [rustup](https://rustup.rs). `rust-toolchain.toml` selects the stable channel.
 - **Node.js** 22.12 or newer.
 - **pnpm.** Any recent version works: it switches to the version pinned in `package.json`.
-- **Tauri's system libraries** for your OS: see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+- **Tauri's system libraries** for your OS: see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). On Windows that's the Microsoft C++ Build Tools and WebView2, which Windows 10 and 11 already include.
+- **On Windows, the native Claude Code install** (`claude.exe`). Claudine doesn't run the npm package's `claude.cmd`: a `.cmd` file runs through `cmd.exe`, which would read `&`, `|` and `%` in Claudine's arguments as commands.
 - **git**, and optionally the GitHub CLI (`gh`), signed in, for opening pull requests from Agentic mode.
 
 ### Run it
@@ -106,10 +107,8 @@ git clone https://github.com/MRVIT-Engineering/claudine.git
 cd claudine
 pnpm install
 pnpm dev      # run the app in development mode
-pnpm build    # build an optimized binary at target/release/my-editor
+pnpm build    # build an optimized binary at target/release/my-editor (my-editor.exe on Windows)
 ```
-
-Windows isn't supported yet: it needs its own security review.
 
 ## Development
 
@@ -121,7 +120,7 @@ cargo deny check     # licenses, advisories and sources (cargo install cargo-den
 pnpm site            # run the website locally
 ```
 
-CI runs all of these on every pull request, on macOS and Linux.
+CI runs all of these on every pull request, on macOS, Linux and Windows.
 
 Before changing code, read [CLAUDE.md](CLAUDE.md): it has the rules every change follows, such as where security checks live, how new Tauri commands are allowed, and how dependencies are added. [DEPENDENCIES.md](DEPENDENCIES.md) explains why each dependency is here.
 
